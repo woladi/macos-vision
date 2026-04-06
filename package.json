@@ -9,7 +9,8 @@
     "build-native": "node scripts/build-native.js",
     "postinstall": "node scripts/build-native.js",
     "build": "tsc",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "test": "vitest run"
   },
   "keywords": [
     "ocr",
@@ -23,12 +24,15 @@
   ],
   "author": "Adrian Wolczuk",
   "license": "MIT",
-  "os": ["darwin"],
+  "os": [
+    "darwin"
+  ],
   "engines": {
     "node": ">=18.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^2.1.9"
   }
 }
