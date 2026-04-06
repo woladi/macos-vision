@@ -24,7 +24,7 @@ describe('ocr() — format: text', () => {
 
   it('contains known text from fixture', async () => {
     const text = await ocr(SAMPLE_IMG);
-    expect(text as string).toContain('alicjadobosz');
+    expect(text as string).toContain('Henry VIII');
   });
 });
 
@@ -51,7 +51,7 @@ describe('ocr() — format: blocks', () => {
   it('at least one block contains known text from fixture', async () => {
     const blocks = await ocr(SAMPLE_IMG, { format: 'blocks' }) as VisionBlock[];
     const texts = blocks.map(b => b.text);
-    expect(texts.some(t => t.includes('alicjadobosz') || t.includes('Wyniki'))).toBe(true);
+    expect(texts.some(t => t.includes('Henry VIII') || t.includes('Wikipedia'))).toBe(true);
   });
 });
 
