@@ -22,7 +22,41 @@ npm install macos-vision
 
 The native Swift binary is compiled automatically on install.
 
-## Usage
+## CLI
+
+```bash
+# OCR — plain text (default)
+npx macos-vision photo.jpg
+
+# Structured OCR blocks with bounding boxes
+npx macos-vision --blocks photo.jpg
+
+# Detect faces
+npx macos-vision --faces photo.jpg
+
+# Detect barcodes and QR codes
+npx macos-vision --barcodes photo.jpg
+
+# Detect rectangular shapes
+npx macos-vision --rectangles photo.jpg
+
+# Find document boundary
+npx macos-vision --document photo.jpg
+
+# Classify image content
+npx macos-vision --classify photo.jpg
+
+# Run all detections at once
+npx macos-vision --all photo.jpg
+```
+
+Multiple flags can be combined: `npx macos-vision --blocks --faces --classify photo.jpg`
+
+Structured results are printed as JSON to stdout.
+
+---
+
+## API
 
 ```js
 import { ocr, detectFaces, detectBarcodes, detectRectangles, detectDocument, classify } from 'macos-vision'

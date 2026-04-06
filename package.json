@@ -1,11 +1,14 @@
 {
   "name": "macos-vision",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Apple Vision OCR & image analysis for Node.js — native, fast, offline, no API keys",
   "author": "Adrian Wolczuk",
   "license": "MIT","type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "macos-vision": "./dist/cli.js"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/woladi/macos-vision.git"
