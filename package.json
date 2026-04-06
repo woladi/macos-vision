@@ -20,7 +20,12 @@
     "text-extraction",
     "vision",
     "native",
-    "offline"
+    "offline",
+    "face-detection",
+    "barcode",
+    "qr-code",
+    "document-detection",
+    "image-classification"
   ],
   "author": "Adrian Wolczuk",
   "license": "MIT",

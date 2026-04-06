@@ -1,8 +1,8 @@
 # macos-vision
 
-> Apple Vision OCR for Node.js — native, fast, offline, no API keys required.
+> Apple Vision for Node.js — native, fast, offline, no API keys required.
 
-Uses macOS's built-in [Vision framework](https://developer.apple.com/documentation/vision) via a compiled Swift binary. Works completely offline. No cloud services, no API keys, no Python.
+Uses macOS's built-in [Vision framework](https://developer.apple.com/documentation/vision) via a compiled Swift binary. Works completely offline. No cloud services, no API keys, no Python, zero runtime dependencies.
 
 ## Requirements
 
@@ -20,51 +20,127 @@ xcode-select --install
 npm install macos-vision
 ```
 
-The native binary is compiled automatically on install.
+The native Swift binary is compiled automatically on install.
 
 ## Usage
 
 ```js
-import { ocr } from 'macos-vision'
+import { ocr, detectFaces, detectBarcodes, detectRectangles, detectDocument, classify } from 'macos-vision'
 
-// Plain text
-const text = await ocr('/path/to/image.png')
-console.log(text)
+// OCR — plain text
+const text = await ocr('photo.jpg')
 
-// Structured blocks with bounding box coordinates
-const blocks = await ocr('/path/to/image.png', { format: 'blocks' })
-console.log(blocks)
-// [
-//   { text: 'Hello', x: 0.05, y: 0.10, width: 0.2, height: 0.04 },
-//   { text: 'World', x: 0.05, y: 0.15, width: 0.2, height: 0.04 },
-//   ...
-// ]
+// OCR — structured blocks with bounding boxes
+const blocks = await ocr('photo.jpg', { format: 'blocks' })
+
+// Detect faces
+const faces = await detectFaces('photo.jpg')
+
+// Detect barcodes and QR codes
+const codes = await detectBarcodes('invoice.jpg')
+
+// Detect rectangular shapes (tables, forms, cards)
+const rects = await detectRectangles('document.jpg')
+
+// Find document boundary in a photo
+const doc = await detectDocument('photo.jpg') // DocumentBounds | null
+
+// Classify image content
+const labels = await classify('photo.jpg')
 ```
 
 ## API
 
 ### `ocr(imagePath, options?)`
 
+Extracts text from an image.
+
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `imagePath` | `string` | — | Absolute or relative path to image (PNG, JPG, JPEG, WEBP) |
-| `options.format` | `'text' \| 'blocks'` | `'text'` | Return plain text or structured blocks |
+| `imagePath` | `string` | — | Path to image (PNG, JPG, JPEG, WEBP) |
+| `options.format` | `'text' \| 'blocks'` | `'text'` | Plain text or structured blocks with coordinates |
 
-**Returns:**
-- `format: 'text'` → `Promise<string>`
-- `format: 'blocks'` → `Promise<VisionBlock[]>`
-
-### `VisionBlock`
+Returns `Promise<string>` or `Promise<VisionBlock[]>`.
 
 ```ts
 interface VisionBlock {
-  text: string    // Recognized text
-  x: number       // Left position (0–1)
-  y: number       // Top position (0–1), 0 = top of image
-  width: number   // Width (0–1)
-  height: number  // Height (0–1)
+  text: string
+  x: number       // 0–1 from left
+  y: number       // 0–1 from top
+  width: number   // 0–1
+  height: number  // 0–1
 }
 ```
+
+---
+
+### `detectFaces(imagePath)`
+
+Detects human faces and returns their bounding boxes.
+
+```ts
+interface Face {
+  x: number; y: number; width: number; height: number
+  confidence: number  // 0–1
+}
+```
+
+---
+
+### `detectBarcodes(imagePath)`
+
+Detects barcodes and QR codes and decodes their payload.
+
+```ts
+interface Barcode {
+  type: string    // e.g. 'org.iso.QRCode', 'org.gs1.EAN-13'
+  value: string   // decoded content
+  x: number; y: number; width: number; height: number
+}
+```
+
+---
+
+### `detectRectangles(imagePath)`
+
+Finds rectangular shapes (documents, tables, cards, forms).
+
+```ts
+interface Rectangle {
+  topLeft: [number, number]; topRight: [number, number]
+  bottomLeft: [number, number]; bottomRight: [number, number]
+  confidence: number
+}
+```
+
+---
+
+### `detectDocument(imagePath)`
+
+Finds the boundary of a document in a photo (e.g. paper on a desk). Returns `null` if no document is found.
+
+```ts
+interface DocumentBounds {
+  topLeft: [number, number]; topRight: [number, number]
+  bottomLeft: [number, number]; bottomRight: [number, number]
+  confidence: number
+}
+```
+
+---
+
+### `classify(imagePath)`
+
+Returns top image classification labels with confidence scores.
+
+```ts
+interface Classification {
+  identifier: string   // e.g. 'document', 'outdoor', 'animal'
+  confidence: number   // 0–1
+}
+```
+
+---
 
 ## Why macos-vision?
 
@@ -73,16 +149,15 @@ interface VisionBlock {
 | Offline | ✅ | ✅ | ❌ |
 | No API key | ✅ | ✅ | ❌ |
 | Native speed | ✅ | ❌ | — |
-| Bounding boxes | ✅ | ✅ | ✅ |
 | Zero runtime deps | ✅ | ❌ | ❌ |
-| Polish language | ✅ | ✅ | ✅ |
+| OCR with bounding boxes | ✅ | ✅ | ✅ |
+| Face detection | ✅ | ❌ | ✅ |
+| Barcode / QR | ✅ | ❌ | ✅ |
+| Document detection | ✅ | ❌ | ✅ |
+| Image classification | ✅ | ❌ | ✅ |
 | macOS only | ✅ | ❌ | ❌ |
 
-Apple Vision is the same engine used by macOS Spotlight, Live Text, and Shortcuts — it's highly optimized and accurate.
-
-## Supported languages
-
-Recognition is optimized for **Polish** (`pl-PL`) and **English** (`en-US`) by default, which are natively supported by Apple Vision with high accuracy.
+Apple Vision is the same engine used by macOS Spotlight, Live Text, and Shortcuts — highly optimized and accurate.
 
 ## License
 
