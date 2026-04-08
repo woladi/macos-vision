@@ -1,5 +1,7 @@
 # Changelog
 
+## [1.0.2](https://github.com/woladi/macos-vision/compare/v1.0.1...v1.0.2) (2026-04-08)
+
 ## [1.0.1](https://github.com/woladi/macos-vision/compare/v0.3.1...v1.0.1) (2026-04-08)
 
 ## [0.3.1](https://github.com/woladi/macos-vision/compare/v0.3.0...v0.3.1) (2026-04-08)
