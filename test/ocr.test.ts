@@ -45,6 +45,8 @@ describe('ocr() — format: blocks', () => {
       expect(b.y).toBeLessThanOrEqual(1);
       expect(b.width).toBeGreaterThan(0);
       expect(b.height).toBeGreaterThan(0);
+      expect(b.confidence).toBeGreaterThanOrEqual(0);
+      expect(b.confidence).toBeLessThanOrEqual(1);
     }
   });
 
@@ -101,6 +103,8 @@ describe('detectBarcodes()', () => {
       expect(c.y).toBeGreaterThanOrEqual(0);
       expect(c.width).toBeGreaterThan(0);
       expect(c.height).toBeGreaterThan(0);
+      expect(c.confidence).toBeGreaterThanOrEqual(0);
+      expect(c.confidence).toBeLessThanOrEqual(1);
     }
   });
 });

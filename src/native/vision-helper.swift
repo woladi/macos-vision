@@ -7,6 +7,7 @@ import Foundation
 struct OCRResult: Codable {
     let t: String
     let x: Double; let y: Double; let w: Double; let h: Double
+    let confidence: Float
 }
 
 struct FaceResult: Codable {
@@ -18,6 +19,7 @@ struct BarcodeResult: Codable {
     let type: String
     let value: String
     let x: Double; let y: Double; let w: Double; let h: Double
+    let confidence: Float
 }
 
 struct RectangleResult: Codable {
@@ -92,7 +94,8 @@ if isJsonMode || (!isFaces && !isBarcodes && !isRectangles && !isDocument && !is
                     x: Double(box.origin.x),
                     y: flipY(Double(box.origin.y), Double(box.size.height)),
                     w: Double(box.size.width),
-                    h: Double(box.size.height)
+                    h: Double(box.size.height),
+                    confidence: c.confidence
                 ))
             } else {
                 rawText += c.string + "\n"
@@ -152,7 +155,8 @@ if isBarcodes {
                 x: Double(box.origin.x),
                 y: flipY(Double(box.origin.y), Double(box.size.height)),
                 w: Double(box.size.width),
-                h: Double(box.size.height)
+                h: Double(box.size.height),
+                confidence: o.confidence
             ))
         }
     }

@@ -28,6 +28,8 @@ export interface VisionBlock {
   width: number;
   /** Height, 0–1 relative to image */
   height: number;
+  /** OCR transcription confidence, 0–1 */
+  confidence: number;
 }
 
 export interface OcrOptions {
@@ -48,9 +50,22 @@ export async function ocr(
     const { stdout } = await execFileAsync(BIN_PATH, ['--json', absPath], {
       timeout: BINARY_TIMEOUT_MS,
     });
-    const raw: Array<{ t: string; x: number; y: number; w: number; h: number }> =
-      JSON.parse(stdout);
-    return raw.map((b) => ({ text: b.t, x: b.x, y: b.y, width: b.w, height: b.h }));
+    const raw: Array<{
+      t: string;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      confidence: number;
+    }> = JSON.parse(stdout);
+    return raw.map((b) => ({
+      text: b.t,
+      x: b.x,
+      y: b.y,
+      width: b.w,
+      height: b.h,
+      confidence: b.confidence,
+    }));
   }
 
   const { stdout } = await execFileAsync(BIN_PATH, [absPath], { timeout: BINARY_TIMEOUT_MS });
@@ -94,11 +109,20 @@ export interface Barcode {
   width: number;
   /** Height, 0–1 relative to image */
   height: number;
+  /** Detection confidence, 0–1 */
+  confidence: number;
 }
 
 export async function detectBarcodes(imagePath: string): Promise<Barcode[]> {
-  const raw: Array<{ type: string; value: string; x: number; y: number; w: number; h: number }> =
-    JSON.parse(await run('--barcodes', imagePath));
+  const raw: Array<{
+    type: string;
+    value: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    confidence: number;
+  }> = JSON.parse(await run('--barcodes', imagePath));
   return raw.map((b) => ({
     type: b.type,
     value: b.value,
@@ -106,6 +130,7 @@ export async function detectBarcodes(imagePath: string): Promise<Barcode[]> {
     y: b.y,
     width: b.w,
     height: b.h,
+    confidence: b.confidence,
   }));
 }
 
