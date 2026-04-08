@@ -22,6 +22,19 @@ npm install macos-vision
 
 The native Swift binary is compiled automatically on install.
 
+## What this is (and isn't)
+
+`macos-vision` gives you **raw Apple Vision results** — text, coordinates, bounding boxes, labels.
+
+It is **not** a document pipeline. It does not:
+- Convert PDFs or images to Markdown
+- Understand document structure (headings, tables, paragraphs)
+- Chain multiple detections into a final report
+
+For those use cases, use the raw output as input to an LLM or a post-processing layer of your own.
+
+---
+
 ## CLI
 
 ```bash

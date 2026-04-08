@@ -13,9 +13,7 @@ if (existsSync(binPath)) {
   process.exit(0);
 }
 
-if (!mkdirSync(binDir, { recursive: true }) === false) {
-  // dir created
-}
+mkdirSync(binDir, { recursive: true });
 
 try {
   execSync(`swiftc -O "${swiftSrc}" -o "${binPath}"`, { stdio: 'inherit' });

@@ -6,9 +6,12 @@ import { fileURLToPath } from 'url';
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BIN_PATH = resolve(__dirname, '../bin/vision-helper');
+const BINARY_TIMEOUT_MS = 30_000;
 
 async function run(flag: string, imagePath: string): Promise<string> {
-  const { stdout } = await execFileAsync(BIN_PATH, [flag, resolve(imagePath)]);
+  const { stdout } = await execFileAsync(BIN_PATH, [flag, resolve(imagePath)], {
+    timeout: BINARY_TIMEOUT_MS,
+  });
   return stdout;
 }
 
@@ -42,13 +45,15 @@ export async function ocr(
   const { format = 'text' } = options;
 
   if (format === 'blocks') {
-    const { stdout } = await execFileAsync(BIN_PATH, ['--json', absPath]);
+    const { stdout } = await execFileAsync(BIN_PATH, ['--json', absPath], {
+      timeout: BINARY_TIMEOUT_MS,
+    });
     const raw: Array<{ t: string; x: number; y: number; w: number; h: number }> =
       JSON.parse(stdout);
     return raw.map((b) => ({ text: b.t, x: b.x, y: b.y, width: b.w, height: b.h }));
   }
 
-  const { stdout } = await execFileAsync(BIN_PATH, [absPath]);
+  const { stdout } = await execFileAsync(BIN_PATH, [absPath], { timeout: BINARY_TIMEOUT_MS });
   return stdout.trim();
 }
 
