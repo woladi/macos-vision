@@ -11,8 +11,7 @@
     "tagName": "v${version}"
   },
   "github": {
-    "release": true,
-    "releaseName": "v${version}"
+    "release": false
   },
   "npm": {
     "publish": true,
