@@ -195,3 +195,18 @@ export async function classify(imagePath: string): Promise<Classification[]> {
   const raw: Classification[] = JSON.parse(await run('--classify', imagePath));
   return raw;
 }
+
+// ─── Layout inference ─────────────────────────────────────────────────────────
+
+export type {
+  BlockKind,
+  BaseBlock,
+  TextBlock,
+  FaceBlock,
+  BarcodeBlock,
+  RectangleBlock,
+  DocumentBlock,
+  LayoutBlock,
+  InferLayoutInput,
+} from './layout.js';
+export { inferLayout, sortBlocksByReadingOrder } from './layout.js';

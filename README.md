@@ -94,7 +94,45 @@ const doc = await detectDocument('photo.jpg') // DocumentBounds | null
 
 // Classify image content
 const labels = await classify('photo.jpg')
+
+// Layout inference — unified reading-order-sorted representation
+const layout = inferLayout({ textBlocks: blocks, faces, barcodes: codes })
+// layout is LayoutBlock[] — ready to feed into a Markdown renderer or LLM context
 ```
+
+### Layout inference
+
+`inferLayout` merges raw Vision results into a unified `LayoutBlock[]` sorted in reading order (top-to-bottom, left-to-right). Text blocks are grouped into **lines** and **paragraphs** using geometric heuristics.
+
+```ts
+import { ocr, detectFaces, detectBarcodes, inferLayout } from 'macos-vision';
+
+const blocks   = await ocr('page.png', { format: 'blocks' });
+const faces    = await detectFaces('page.png');
+const barcodes = await detectBarcodes('page.png');
+
+const layout = inferLayout({ textBlocks: blocks, faces, barcodes });
+
+for (const block of layout) {
+  if (block.kind === 'text') {
+    console.log(`[p${block.paragraphId} l${block.lineId}] ${block.text}`);
+  } else {
+    console.log(`[${block.kind}] at (${block.x.toFixed(2)}, ${block.y.toFixed(2)})`);
+  }
+}
+```
+
+`LayoutBlock` is a discriminated union — use `block.kind` to narrow the type:
+
+| `kind` | Extra fields |
+|--------|-------------|
+| `'text'` | `text`, `lineId`, `paragraphId` |
+| `'barcode'` | `value`, `type` |
+| `'face'` | — |
+| `'rectangle'` | — |
+| `'document'` | — |
+
+> **Note:** Layout inference is a heuristic layer. It does not understand multi-column layouts or rotated text. Treat it as structured input for downstream tools, not as ground truth.
 
 ## API
 
