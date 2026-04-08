@@ -101,7 +101,12 @@ if isJsonMode || (!isFaces && !isBarcodes && !isRectangles && !isDocument && !is
     }
     request.recognitionLevel = .accurate
 
-    try? handler.perform([request])
+    do {
+        try handler.perform([request])
+    } catch {
+        fputs("ERROR: Vision OCR failed: \(error.localizedDescription)\n", stderr)
+        exit(1)
+    }
     print(isJsonMode ? encodeJSON(ocrResults) : rawText.trimmingCharacters(in: .whitespacesAndNewlines))
     exit(0)
 }
@@ -123,7 +128,12 @@ if isFaces {
             ))
         }
     }
-    try? handler.perform([request])
+    do {
+        try handler.perform([request])
+    } catch {
+        fputs("ERROR: Vision face detection failed: \(error.localizedDescription)\n", stderr)
+        exit(1)
+    }
     print(encodeJSON(results))
     exit(0)
 }
@@ -146,7 +156,12 @@ if isBarcodes {
             ))
         }
     }
-    try? handler.perform([request])
+    do {
+        try handler.perform([request])
+    } catch {
+        fputs("ERROR: Vision barcode detection failed: \(error.localizedDescription)\n", stderr)
+        exit(1)
+    }
     print(encodeJSON(results))
     exit(0)
 }
@@ -166,7 +181,12 @@ if isRectangles {
         }
     }
     (request as VNDetectRectanglesRequest).maximumObservations = 0
-    try? handler.perform([request])
+    do {
+        try handler.perform([request])
+    } catch {
+        fputs("ERROR: Vision rectangle detection failed: \(error.localizedDescription)\n", stderr)
+        exit(1)
+    }
     print(encodeJSON(results))
     exit(0)
 }
@@ -185,7 +205,12 @@ if isDocument {
             ))
         }
     }
-    try? handler.perform([request])
+    do {
+        try handler.perform([request])
+    } catch {
+        fputs("ERROR: Vision document detection failed: \(error.localizedDescription)\n", stderr)
+        exit(1)
+    }
     print(encodeJSON(results))
     exit(0)
 }
@@ -201,7 +226,12 @@ if isClassify {
             results.append(ClassificationResult(identifier: o.identifier, confidence: o.confidence))
         }
     }
-    try? handler.perform([request])
+    do {
+        try handler.perform([request])
+    } catch {
+        fputs("ERROR: Vision classification failed: \(error.localizedDescription)\n", stderr)
+        exit(1)
+    }
     print(encodeJSON(results))
     exit(0)
 }
