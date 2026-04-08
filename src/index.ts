@@ -68,8 +68,9 @@ export interface Face {
 }
 
 export async function detectFaces(imagePath: string): Promise<Face[]> {
-  const raw: Array<{ x: number; y: number; w: number; h: number; confidence: number }> =
-    JSON.parse(await run('--faces', imagePath));
+  const raw: Array<{ x: number; y: number; w: number; h: number; confidence: number }> = JSON.parse(
+    await run('--faces', imagePath)
+  );
   return raw.map((f) => ({ x: f.x, y: f.y, width: f.w, height: f.h, confidence: f.confidence }));
 }
 
@@ -120,8 +121,10 @@ export interface Rectangle {
 
 export async function detectRectangles(imagePath: string): Promise<Rectangle[]> {
   const raw: Array<{
-    topLeft: [number, number]; topRight: [number, number];
-    bottomLeft: [number, number]; bottomRight: [number, number];
+    topLeft: [number, number];
+    topRight: [number, number];
+    bottomLeft: [number, number];
+    bottomRight: [number, number];
     confidence: number;
   }> = JSON.parse(await run('--rectangles', imagePath));
   return raw;
