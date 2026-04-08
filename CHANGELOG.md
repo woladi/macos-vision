@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.0](https://github.com/woladi/macos-vision/compare/v0.2.0...v0.3.0) (2026-04-08)
+
+### Features
+
+* add inferLayout() — unified reading-order LayoutBlock representation ([aec507e](https://github.com/woladi/macos-vision/commit/aec507eb7cf133ec1e56759c0945563a48d871ee))
+
 ## [0.2.0](https://github.com/woladi/macos-vision/compare/v0.1.4...v0.2.0) (2026-04-08)
 
 ### Features

@@ -1,6 +1,6 @@
 {
   "name": "macos-vision",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Apple Vision OCR & image analysis for Node.js — native, fast, offline, no API keys",
   "author": "Adrian Wolczuk",
   "license": "MIT",
