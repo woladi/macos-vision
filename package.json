@@ -48,6 +48,11 @@
       "eslint --fix"
     ]
   },
+  "socket": {
+    "ignore": {
+      "installScripts": true
+    }
+  },
   "os": [
     "darwin"
   ],
