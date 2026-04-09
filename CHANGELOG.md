@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.0](https://github.com/woladi/macos-vision/compare/v1.0.3...v1.1.0) (2026-04-09)
+
+### Features
+
+* add PDF support via sips rasterization ([a48bf17](https://github.com/woladi/macos-vision/commit/a48bf17579a6df11aed6eadbde4fa5041ccaa981))
+
 ## [1.0.3](https://github.com/woladi/macos-vision/compare/v1.0.2...v1.0.3) (2026-04-08)
 
 ### Reverts
