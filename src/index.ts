@@ -1,18 +1,91 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { resolve, dirname } from 'path';
+import { resolve, dirname, extname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { tmpdir } from 'os';
+import { open, mkdir, readdir, rm } from 'fs/promises';
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BIN_PATH = resolve(__dirname, '../bin/vision-helper');
 const BINARY_TIMEOUT_MS = 30_000;
+const SIPS_TIMEOUT_MS = 60_000;
 
 async function run(flag: string, imagePath: string): Promise<string> {
   const { stdout } = await execFileAsync(BIN_PATH, [flag, resolve(imagePath)], {
     timeout: BINARY_TIMEOUT_MS,
   });
   return stdout;
+}
+
+// ─── PDF helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Returns true if the file at `filePath` is a PDF.
+ * Uses extension as a fast path; falls back to magic bytes (`%PDF`) for
+ * files whose extension does not match their actual content.
+ */
+async function isPdf(filePath: string): Promise<boolean> {
+  if (extname(filePath).toLowerCase() === '.pdf') return true;
+  let fh;
+  try {
+    fh = await open(filePath, 'r');
+    const buf = Buffer.alloc(4);
+    await fh.read(buf, 0, 4, 0);
+    return buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46;
+  } finally {
+    await fh?.close();
+  }
+}
+
+/**
+ * Rasterizes a PDF to PNG files in `outDir` using macOS `sips`.
+ * Returns sorted list of absolute PNG paths (order = page order).
+ *
+ * sips names single-page output `{basename}.png` and multi-page output
+ * `{basename}-1.png`, `{basename}-2.png`, etc. The numeric sort handles both.
+ */
+async function rasterizePdf(pdfPath: string, outDir: string): Promise<string[]> {
+  await execFileAsync(
+    'sips',
+    ['-s', 'format', 'png', '--resampleHeight', '2000', pdfPath, '--out', outDir],
+    { timeout: SIPS_TIMEOUT_MS }
+  );
+  const entries = await readdir(outDir);
+  const pngs = entries.filter((n) => n.toLowerCase().endsWith('.png'));
+  pngs.sort((a, b) => {
+    const numA = parseInt(a.match(/-(\d+)\.png$/i)?.[1] ?? '0', 10);
+    const numB = parseInt(b.match(/-(\d+)\.png$/i)?.[1] ?? '0', 10);
+    return numA - numB;
+  });
+  return pngs.map((n) => join(outDir, n));
+}
+
+/**
+ * Full PDF OCR pipeline: rasterize → per-page OCR → merge results.
+ * Temporary PNG files are always cleaned up in the `finally` block.
+ */
+async function ocrPdf(pdfPath: string, format: 'text' | 'blocks'): Promise<string | VisionBlock[]> {
+  const outDir = join(tmpdir(), `macos-vision-${globalThis.crypto.randomUUID()}`);
+  await mkdir(outDir, { recursive: true });
+  try {
+    const pages = await rasterizePdf(pdfPath, outDir);
+    if (format === 'blocks') {
+      const all: VisionBlock[] = [];
+      for (let i = 0; i < pages.length; i++) {
+        const blocks = (await ocr(pages[i], { format: 'blocks' })) as VisionBlock[];
+        all.push(...blocks.map((b) => ({ ...b, page: i })));
+      }
+      return all;
+    }
+    const texts: string[] = [];
+    for (let i = 0; i < pages.length; i++) {
+      texts.push((await ocr(pages[i])) as string);
+    }
+    return texts.join('\n\n--- Page Break ---\n\n');
+  } finally {
+    await rm(outDir, { recursive: true, force: true });
+  }
 }
 
 // ─── OCR ─────────────────────────────────────────────────────────────────────
@@ -30,6 +103,8 @@ export interface VisionBlock {
   height: number;
   /** OCR transcription confidence, 0–1 */
   confidence: number;
+  /** 0-based page index. Present only when the source was a PDF. Absent for images. */
+  page?: number;
 }
 
 export interface OcrOptions {
@@ -46,6 +121,12 @@ export async function ocr(
   const absPath = resolve(imagePath);
   const { format = 'text' } = options;
 
+  // ── PDF fast-path: rasterize via sips, then OCR each page ────────────────
+  if (await isPdf(absPath)) {
+    return ocrPdf(absPath, format);
+  }
+
+  // ── Existing image path (unchanged) ──────────────────────────────────────
   if (format === 'blocks') {
     const { stdout } = await execFileAsync(BIN_PATH, ['--json', absPath], {
       timeout: BINARY_TIMEOUT_MS,

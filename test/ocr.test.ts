@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readdirSync } from 'fs';
+import { tmpdir } from 'os';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -12,6 +14,7 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SAMPLE_IMG = resolve(__dirname, 'fixtures/sample.png');
+const SAMPLE_PDF = resolve(__dirname, 'fixtures/sample.pdf');
 
 // ─── OCR ─────────────────────────────────────────────────────────────────────
 
@@ -167,5 +170,42 @@ describe('classify()', () => {
       expect(l.confidence).toBeGreaterThan(0);
       expect(l.confidence).toBeLessThanOrEqual(1);
     }
+  });
+});
+
+// ─── PDF support ─────────────────────────────────────────────────────────────
+
+describe('ocr() — PDF, format: text', () => {
+  it('returns a non-empty string for a PDF', async () => {
+    const text = await ocr(SAMPLE_PDF);
+    expect(typeof text).toBe('string');
+    expect((text as string).length).toBeGreaterThan(0);
+  });
+
+  it('contains known text from fixture PDF', async () => {
+    const text = await ocr(SAMPLE_PDF) as string;
+    expect(text).toMatch(/Henry VIII|Wikipedia/);
+  });
+});
+
+describe('ocr() — PDF, format: blocks', () => {
+  it('returns a flat VisionBlock[] with page field', async () => {
+    const blocks = await ocr(SAMPLE_PDF, { format: 'blocks' }) as VisionBlock[];
+    expect(Array.isArray(blocks)).toBe(true);
+    expect(blocks.length).toBeGreaterThan(0);
+    for (const b of blocks) {
+      expect(b.page).toBe(0);
+      expect(b.confidence).toBeGreaterThanOrEqual(0);
+      expect(b.confidence).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+describe('ocr() — PDF cleanup', () => {
+  it('leaves no temp directories behind after OCR', async () => {
+    const before = readdirSync(tmpdir()).filter((d) => d.startsWith('macos-vision-'));
+    await ocr(SAMPLE_PDF);
+    const after = readdirSync(tmpdir()).filter((d) => d.startsWith('macos-vision-'));
+    expect(after.length).toBe(before.length);
   });
 });

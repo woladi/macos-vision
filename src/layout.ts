@@ -198,6 +198,14 @@ export function sortBlocksByReadingOrder(blocks: LayoutBlock[]): LayoutBlock[] {
  * (`paragraphId`) using simple bounding-box heuristics. All other block types
  * are placed into the sorted sequence by their top-left coordinate.
  *
+ * **Multi-page PDFs**: `VisionBlock` items from PDF OCR carry an optional `page` field (0-based).
+ * Because all coordinates are page-local (0–1 relative to each page), mixing blocks from
+ * different pages produces meaningless geometry. Pre-filter by page before calling inferLayout:
+ * ```ts
+ * const pageBlocks = pdfBlocks.filter(b => b.page === 0);
+ * const layout = inferLayout({ textBlocks: pageBlocks });
+ * ```
+ *
  * @example
  * ```ts
  * const blocks  = await ocr('page.png', { format: 'blocks' });
