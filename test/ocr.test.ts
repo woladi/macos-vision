@@ -1,10 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { readdirSync } from 'fs';
-import { tmpdir } from 'os';
+import { existsSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
-  ocr, VisionBlock,
+  ocr, VisionBlock, rasterizePdf, PdfPage,
   detectFaces, Face,
   detectBarcodes, Barcode,
   detectRectangles, Rectangle,
@@ -201,11 +200,27 @@ describe('ocr() — PDF, format: blocks', () => {
   });
 });
 
-describe('ocr() — PDF cleanup', () => {
-  it('leaves no temp directories behind after OCR', async () => {
-    const before = readdirSync(tmpdir()).filter((d) => d.startsWith('macos-vision-'));
-    await ocr(SAMPLE_PDF);
-    const after = readdirSync(tmpdir()).filter((d) => d.startsWith('macos-vision-'));
-    expect(after.length).toBe(before.length);
+describe('rasterizePdf()', () => {
+  it('returns pages array and cacheDir', async () => {
+    const result = await rasterizePdf(SAMPLE_PDF);
+    expect(Array.isArray(result.pages)).toBe(true);
+    expect(result.pages.length).toBeGreaterThan(0);
+    expect(typeof result.cacheDir).toBe('string');
+    expect(result.cacheDir.length).toBeGreaterThan(0);
+  });
+
+  it('each page has 0-based index and existing PNG path', async () => {
+    const { pages } = await rasterizePdf(SAMPLE_PDF);
+    for (const p of pages as PdfPage[]) {
+      expect(typeof p.page).toBe('number');
+      expect(p.page).toBeGreaterThanOrEqual(0);
+      expect(p.path).toMatch(/\.png$/i);
+      expect(existsSync(p.path)).toBe(true);
+    }
+  });
+
+  it('single-page PDF produces page index 0', async () => {
+    const { pages } = await rasterizePdf(SAMPLE_PDF);
+    expect(pages[0].page).toBe(0);
   });
 });

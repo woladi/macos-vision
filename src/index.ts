@@ -1,15 +1,15 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { resolve, dirname, extname, join } from 'path';
+import { resolve, dirname, extname, dirname as pathDirname } from 'path';
 import { fileURLToPath } from 'url';
-import { tmpdir } from 'os';
-import { open, mkdir, readdir, rm } from 'fs/promises';
+import { open } from 'fs/promises';
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BIN_PATH = resolve(__dirname, '../bin/vision-helper');
+const PDF_BIN_PATH = resolve(__dirname, '../bin/pdf-helper');
 const BINARY_TIMEOUT_MS = 30_000;
-const SIPS_TIMEOUT_MS = 60_000;
+const PDF_RASTERIZE_TIMEOUT_MS = 120_000;
 
 async function run(flag: string, imagePath: string): Promise<string> {
   const { stdout } = await execFileAsync(BIN_PATH, [flag, resolve(imagePath)], {
@@ -38,54 +38,57 @@ async function isPdf(filePath: string): Promise<boolean> {
   }
 }
 
-/**
- * Rasterizes a PDF to PNG files in `outDir` using macOS `sips`.
- * Returns sorted list of absolute PNG paths (order = page order).
- *
- * sips names single-page output `{basename}.png` and multi-page output
- * `{basename}-1.png`, `{basename}-2.png`, etc. The numeric sort handles both.
- */
-async function rasterizePdf(pdfPath: string, outDir: string): Promise<string[]> {
-  await execFileAsync(
-    'sips',
-    ['-s', 'format', 'png', '--resampleHeight', '2000', pdfPath, '--out', outDir],
-    { timeout: SIPS_TIMEOUT_MS }
-  );
-  const entries = await readdir(outDir);
-  const pngs = entries.filter((n) => n.toLowerCase().endsWith('.png'));
-  pngs.sort((a, b) => {
-    const numA = parseInt(a.match(/-(\d+)\.png$/i)?.[1] ?? '0', 10);
-    const numB = parseInt(b.match(/-(\d+)\.png$/i)?.[1] ?? '0', 10);
-    return numA - numB;
-  });
-  return pngs.map((n) => join(outDir, n));
+export interface PdfPage {
+  /** 0-based page index */
+  page: number;
+  /** Absolute path to the rasterized PNG file */
+  path: string;
+}
+
+export interface PdfRasterizeResult {
+  /** Pages in document order */
+  pages: PdfPage[];
+  /** Directory containing all rasterized PNGs */
+  cacheDir: string;
 }
 
 /**
- * Full PDF OCR pipeline: rasterize → per-page OCR → merge results.
- * Temporary PNG files are always cleaned up in the `finally` block.
+ * Rasterizes a PDF to 300 DPI PNG files using the native `pdf-helper` binary
+ * (PDFKit-based). Files are saved persistently to `~/.cache/macos-vision/`
+ * so they can be reused by downstream tools — **caller is responsible for cleanup**.
+ *
+ * @param pdfPath - Absolute or relative path to the PDF file.
+ * @returns An object with `pages` (sorted array of `{page, path}`) and `cacheDir`.
+ */
+export async function rasterizePdf(pdfPath: string): Promise<PdfRasterizeResult> {
+  const absPath = resolve(pdfPath);
+  const { stdout } = await execFileAsync(PDF_BIN_PATH, [absPath], {
+    timeout: PDF_RASTERIZE_TIMEOUT_MS,
+  });
+  const pages: PdfPage[] = JSON.parse(stdout);
+  const cacheDir = pages.length > 0 ? pathDirname(pages[0].path) : '';
+  return { pages, cacheDir };
+}
+
+/**
+ * Internal PDF OCR pipeline: rasterize via pdf-helper → OCR each page → merge.
+ * PNG files are NOT cleaned up — they persist in ~/.cache/macos-vision/.
  */
 async function ocrPdf(pdfPath: string, format: 'text' | 'blocks'): Promise<string | VisionBlock[]> {
-  const outDir = join(tmpdir(), `macos-vision-${globalThis.crypto.randomUUID()}`);
-  await mkdir(outDir, { recursive: true });
-  try {
-    const pages = await rasterizePdf(pdfPath, outDir);
-    if (format === 'blocks') {
-      const all: VisionBlock[] = [];
-      for (let i = 0; i < pages.length; i++) {
-        const blocks = (await ocr(pages[i], { format: 'blocks' })) as VisionBlock[];
-        all.push(...blocks.map((b) => ({ ...b, page: i })));
-      }
-      return all;
+  const { pages } = await rasterizePdf(pdfPath);
+  if (format === 'blocks') {
+    const all: VisionBlock[] = [];
+    for (const { page, path: pagePath } of pages) {
+      const blocks = (await ocr(pagePath, { format: 'blocks' })) as VisionBlock[];
+      all.push(...blocks.map((b) => ({ ...b, page })));
     }
-    const texts: string[] = [];
-    for (let i = 0; i < pages.length; i++) {
-      texts.push((await ocr(pages[i])) as string);
-    }
-    return texts.join('\n\n--- Page Break ---\n\n');
-  } finally {
-    await rm(outDir, { recursive: true, force: true });
+    return all;
   }
+  const texts: string[] = [];
+  for (const { path: pagePath } of pages) {
+    texts.push((await ocr(pagePath)) as string);
+  }
+  return texts.join('\n\n--- Page Break ---\n\n');
 }
 
 // ─── OCR ─────────────────────────────────────────────────────────────────────
