@@ -3,7 +3,7 @@ import { existsSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
-  ocr, VisionBlock, rasterizePdf, PdfPage,
+  ocr, VisionBlock, rasterizePdf, PdfPage, inferLayout,
   detectFaces, Face,
   detectBarcodes, Barcode,
   detectRectangles, Rectangle,
@@ -14,6 +14,7 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SAMPLE_IMG = resolve(__dirname, 'fixtures/sample.png');
 const SAMPLE_PDF = resolve(__dirname, 'fixtures/sample.pdf');
+const MULTIPAGE_PDF = resolve(__dirname, 'fixtures/test-multipage.pdf');
 
 // ─── OCR ─────────────────────────────────────────────────────────────────────
 
@@ -223,4 +224,91 @@ describe('rasterizePdf()', () => {
     const { pages } = await rasterizePdf(SAMPLE_PDF);
     expect(pages[0].page).toBe(0);
   });
+});
+
+// ─── Multi-page PDF ───────────────────────────────────────────────────────────
+
+describe('rasterizePdf() — multi-page PDF', () => {
+  it('returns exactly 3 pages', async () => {
+    const { pages } = await rasterizePdf(MULTIPAGE_PDF);
+    expect(pages.length).toBe(3);
+  });
+
+  it('pages are 0-indexed sequentially (0, 1, 2)', async () => {
+    const { pages } = await rasterizePdf(MULTIPAGE_PDF);
+    expect(pages.map((p) => p.page)).toEqual([0, 1, 2]);
+  });
+
+  it('all PNG files physically exist on disk', async () => {
+    const { pages } = await rasterizePdf(MULTIPAGE_PDF);
+    for (const p of pages as PdfPage[]) {
+      expect(existsSync(p.path)).toBe(true);
+    }
+  });
+
+  it('filenames are zero-padded (page-001, page-002, page-003)', async () => {
+    const { pages } = await rasterizePdf(MULTIPAGE_PDF);
+    expect(pages[0].path).toMatch(/page-001\.png$/);
+    expect(pages[1].path).toMatch(/page-002\.png$/);
+    expect(pages[2].path).toMatch(/page-003\.png$/);
+  });
+
+  it('all pages share the same cacheDir', async () => {
+    const { pages, cacheDir } = await rasterizePdf(MULTIPAGE_PDF);
+    for (const p of pages as PdfPage[]) {
+      expect(p.path.startsWith(cacheDir)).toBe(true);
+    }
+  });
+});
+
+describe('ocr() — multi-page PDF, format: blocks', () => {
+  it('returns blocks from all 3 pages', async () => {
+    const blocks = (await ocr(MULTIPAGE_PDF, { format: 'blocks' })) as VisionBlock[];
+    const pageIndices = [...new Set(blocks.map((b) => b.page))].sort();
+    expect(pageIndices).toEqual([0, 1, 2]);
+  }, 30_000);
+
+  it('each block has a valid page field (0–2)', async () => {
+    const blocks = (await ocr(MULTIPAGE_PDF, { format: 'blocks' })) as VisionBlock[];
+    for (const b of blocks) {
+      expect(b.page).toBeGreaterThanOrEqual(0);
+      expect(b.page).toBeLessThanOrEqual(2);
+    }
+  }, 30_000);
+
+  it('result is a flat array with text on every block', async () => {
+    const blocks = (await ocr(MULTIPAGE_PDF, { format: 'blocks' })) as VisionBlock[];
+    expect(Array.isArray(blocks)).toBe(true);
+    expect(blocks.every((b) => typeof b.text === 'string')).toBe(true);
+  }, 30_000);
+});
+
+describe('ocr() — multi-page PDF, format: text', () => {
+  it('contains exactly 2 page break markers for 3 pages', async () => {
+    const text = (await ocr(MULTIPAGE_PDF)) as string;
+    const segments = text.split('\n\n--- Page Break ---\n\n');
+    expect(segments.length).toBe(3);
+  }, 30_000);
+
+  it('each page segment is non-empty', async () => {
+    const text = (await ocr(MULTIPAGE_PDF)) as string;
+    const segments = text.split('\n\n--- Page Break ---\n\n');
+    for (const segment of segments) {
+      expect(segment.trim().length).toBeGreaterThan(0);
+    }
+  }, 30_000);
+});
+
+describe('inferLayout() — multi-page awareness', () => {
+  it('page-filtered blocks produce locally 0-based lineId per page', async () => {
+    const blocks = (await ocr(MULTIPAGE_PDF, { format: 'blocks' })) as VisionBlock[];
+    for (let pageIdx = 0; pageIdx < 3; pageIdx++) {
+      const pageBlocks = blocks.filter((b) => b.page === pageIdx);
+      const layout = inferLayout({ textBlocks: pageBlocks });
+      const lineIds = layout.flatMap((b) => (b.kind === 'text' ? [b.lineId] : []));
+      if (lineIds.length > 0) {
+        expect(Math.min(...lineIds)).toBe(0);
+      }
+    }
+  }, 30_000);
 });
