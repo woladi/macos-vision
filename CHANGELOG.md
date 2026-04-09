@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.0](https://github.com/woladi/macos-vision/compare/v1.1.0...v1.2.0) (2026-04-09)
+
+### Features
+
+* replace sips with PDFKit-based pdf-helper binary for PDF rasterization ([4a223e2](https://github.com/woladi/macos-vision/commit/4a223e2de79571794d866452fd5e87b84590ff0d))
+
 ## [1.1.0](https://github.com/woladi/macos-vision/compare/v1.0.3...v1.1.0) (2026-04-09)
 
 ### Features
