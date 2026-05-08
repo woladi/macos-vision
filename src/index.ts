@@ -18,7 +18,7 @@ async function run(flag: string, imagePath: string): Promise<string> {
   return stdout;
 }
 
-// ─── PDF helpers ─────────────────────────────────────────────────────────────
+// ─── PDF helpers ─────────────────────────────────────────────────────
 
 /**
  * Returns true if the file at `filePath` is a PDF.
@@ -124,12 +124,12 @@ export async function ocr(
   const absPath = resolve(imagePath);
   const { format = 'text' } = options;
 
-  // ── PDF fast-path: rasterize via sips, then OCR each page ────────────────
+  // ── PDF fast-path: rasterize via sips, then OCR each page ────────────
   if (await isPdf(absPath)) {
     return ocrPdf(absPath, format);
   }
 
-  // ── Existing image path (unchanged) ──────────────────────────────────────
+  // ── Existing image path (unchanged) ─────────────────────────────────
   if (format === 'blocks') {
     const { stdout } = await execFileAsync(BIN_PATH, ['--json', absPath], {
       timeout: BINARY_TIMEOUT_MS,
@@ -156,7 +156,7 @@ export async function ocr(
   return stdout.trim();
 }
 
-// ─── Face detection ──────────────────────────────────────────────────────────
+// ─── Face detection ──────────────────────────────────────────────────────
 
 export interface Face {
   /** Horizontal position, 0–1 from left */
@@ -218,7 +218,7 @@ export async function detectBarcodes(imagePath: string): Promise<Barcode[]> {
   }));
 }
 
-// ─── Rectangle detection ─────────────────────────────────────────────────────
+// ─── Rectangle detection ───────────────────────────────────────────────────
 
 export interface Rectangle {
   /** Top-left corner [x, y], values 0–1 */
@@ -265,7 +265,7 @@ export async function detectDocument(imagePath: string): Promise<DocumentBounds 
   return raw.length > 0 ? raw[0] : null;
 }
 
-// ─── Image classification ────────────────────────────────────────────────────
+// ─── Image classification ─────────────────────────────────────────────────────
 
 export interface Classification {
   /** Category identifier, e.g. 'document', 'outdoor', 'animal' */
@@ -280,7 +280,7 @@ export async function classify(imagePath: string): Promise<Classification[]> {
   return raw;
 }
 
-// ─── Layout inference ─────────────────────────────────────────────────────────
+// ─── Layout inference ────────────────────────────────────────────────────────────
 
 export type {
   BlockKind,
@@ -294,3 +294,7 @@ export type {
   InferLayoutInput,
 } from './layout.js';
 export { inferLayout, sortBlocksByReadingOrder } from './layout.js';
+
+// ─── Markdown pipeline (VisionScribe) ──────────────────────────────────────────
+export { VisionScribe, OllamaUnavailableError } from './markdown/index.js';
+export type { VisionScribeOptions, ParagraphGroup } from './markdown/index.js';
