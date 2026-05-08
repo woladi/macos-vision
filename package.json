@@ -1,7 +1,7 @@
 {
   "name": "macos-vision",
-  "version": "1.2.0",
-  "description": "Apple Vision OCR & image analysis for Node.js — native, fast, offline, no API keys",
+  "version": "2.0.0",
+  "description": "Apple Vision OCR + image/PDF analysis for Node.js, with optional Ollama-driven Markdown pipeline — native, fast, offline",
   "author": "Adrian Wolczuk",
   "license": "MIT",
   "type": "module",
@@ -10,6 +10,24 @@
   "bin": {
     "macos-vision": "./dist/cli.js"
   },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./markdown": {
+      "import": "./dist/markdown/index.js",
+      "types": "./dist/markdown/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "bin",
+    "scripts/build-native.js",
+    "src/native",
+    "README.md",
+    "LICENSE"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/woladi/macos-vision.git"
@@ -25,7 +43,13 @@
     "lint": "eslint src/**/*.ts",
     "format": "prettier --write src/**/*.ts",
     "release": "release-it",
-    "release:beta": "release-it --preRelease=beta"
+    "release:beta": "release-it --preRelease=beta",
+    "eval:setup": "git clone https://github.com/opendataloader-project/opendataloader-bench eval/bench || echo 'bench already cloned'",
+    "eval": "tsx eval/eval.ts",
+    "eval:resume": "tsx eval/eval.ts --resume",
+    "eval:quick": "tsx eval/eval.ts --limit 10",
+    "eval:report": "tsx eval/report.ts",
+    "optimize-prompts": "tsx eval/optimize-prompts.ts"
   },
   "keywords": [
     "ocr",
@@ -40,7 +64,13 @@
     "barcode",
     "qr-code",
     "document-detection",
-    "image-classification"
+    "image-classification",
+    "markdown",
+    "image-to-markdown",
+    "pdf-to-markdown",
+    "ollama",
+    "llm",
+    "document-pipeline"
   ],
   "lint-staged": {
     "src/**/*.ts": [
@@ -55,6 +85,7 @@
     "node": ">=18.0.0"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.54.0",
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
     "@release-it/conventional-changelog": "^10.0.6",
@@ -65,6 +96,7 @@
     "lint-staged": "^16.4.0",
     "prettier": "^3.8.1",
     "release-it": "^19.2.4",
+    "tsx": "^4.19.0",
     "typescript": "^5.4.0",
     "typescript-eslint": "^8.58.0",
     "vitest": "^2.1.9"
