@@ -1,0 +1,20 @@
+{
+  "name": "macos-vision-eval",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Evaluation harness for the macos-vision Markdown pipeline. Not published; opt-in via `cd eval && npm install`.",
+  "type": "module",
+  "scripts": {
+    "eval": "tsx eval.ts",
+    "eval:resume": "tsx eval.ts --resume",
+    "eval:quick": "tsx eval.ts --limit 10",
+    "eval:report": "tsx report.ts",
+    "optimize-prompts": "tsx optimize-prompts.ts"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.54.0",
+    "@types/node": "^20.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.4.0"
+  }
+}

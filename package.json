@@ -1,7 +1,7 @@
 {
   "name": "macos-vision",
-  "version": "1.2.0",
-  "description": "Apple Vision OCR & image analysis for Node.js — native, fast, offline, no API keys",
+  "version": "2.0.0",
+  "description": "Apple Vision OCR + image/PDF analysis for Node.js, with optional Ollama-driven Markdown pipeline — native, fast, offline",
   "author": "Adrian Wolczuk",
   "license": "MIT",
   "type": "module",
@@ -10,6 +10,24 @@
   "bin": {
     "macos-vision": "./dist/cli.js"
   },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./markdown": {
+      "import": "./dist/markdown/index.js",
+      "types": "./dist/markdown/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "bin",
+    "scripts/build-native.js",
+    "src/native",
+    "README.md",
+    "LICENSE"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/woladi/macos-vision.git"
@@ -25,7 +43,8 @@
     "lint": "eslint src/**/*.ts",
     "format": "prettier --write src/**/*.ts",
     "release": "release-it",
-    "release:beta": "release-it --preRelease=beta"
+    "release:beta": "release-it --preRelease=beta",
+    "eval:setup": "git clone https://github.com/opendataloader-project/opendataloader-bench eval/bench || echo 'bench already cloned'"
   },
   "keywords": [
     "ocr",
@@ -40,7 +59,13 @@
     "barcode",
     "qr-code",
     "document-detection",
-    "image-classification"
+    "image-classification",
+    "markdown",
+    "image-to-markdown",
+    "pdf-to-markdown",
+    "ollama",
+    "llm",
+    "document-pipeline"
   ],
   "lint-staged": {
     "src/**/*.ts": [
