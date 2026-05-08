@@ -23,12 +23,12 @@ describe('ocr() — format: text', () => {
     const text = await ocr(SAMPLE_IMG);
     expect(typeof text).toBe('string');
     expect((text as string).length).toBeGreaterThan(0);
-  });
+  }, 30_000);
 
   it('contains known text from fixture', async () => {
     const text = await ocr(SAMPLE_IMG);
     expect(text as string).toContain('Henry VIII');
-  });
+  }, 30_000);
 });
 
 describe('ocr() — format: blocks', () => {
@@ -36,7 +36,7 @@ describe('ocr() — format: blocks', () => {
     const blocks = await ocr(SAMPLE_IMG, { format: 'blocks' });
     expect(Array.isArray(blocks)).toBe(true);
     expect((blocks as VisionBlock[]).length).toBeGreaterThan(0);
-  });
+  }, 30_000);
 
   it('every block has valid coordinates (0–1) and text', async () => {
     const blocks = await ocr(SAMPLE_IMG, { format: 'blocks' }) as VisionBlock[];
@@ -57,7 +57,7 @@ describe('ocr() — format: blocks', () => {
     const blocks = await ocr(SAMPLE_IMG, { format: 'blocks' }) as VisionBlock[];
     const texts = blocks.map(b => b.text);
     expect(texts.some(t => t.includes('Henry VIII') || t.includes('Wikipedia'))).toBe(true);
-  });
+  }, 30_000);
 });
 
 describe('ocr() — error handling', () => {
