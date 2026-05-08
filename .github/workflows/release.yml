@@ -51,6 +51,9 @@ jobs:
             echo "No existing version tags found, keeping package.json version"
           fi
 
+      - name: Fix package.json for npm publish
+        run: npm pkg fix
+
       - name: Release
         run: npx release-it --ci
         env:
