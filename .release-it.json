@@ -3,7 +3,7 @@
   "git": {
     "commitMessage": "chore: release v${version}",
     "tagName": "v${version}",
-    "push": false,
+    "push": true,
     "requireCleanWorkingDir": false
   },
   "npm": {

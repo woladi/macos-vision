@@ -35,26 +35,35 @@ jobs:
       - name: Test
         run: npm run test
 
+      - name: Check if release is needed
+        id: bump_check
+        run: |
+          LAST_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          if [ -z "$LAST_TAG" ]; then
+            echo "release_needed=true" >> "$GITHUB_OUTPUT"
+            echo "No previous tag — releasing initial version"
+            exit 0
+          fi
+          if git log "$LAST_TAG..HEAD" --format=%B | grep -qE '^(feat|fix)(\(.+\))?!?: |BREAKING CHANGE'; then
+            echo "release_needed=true" >> "$GITHUB_OUTPUT"
+            echo "Found bumping commits since $LAST_TAG"
+          else
+            echo "release_needed=false" >> "$GITHUB_OUTPUT"
+            echo "No feat/fix/BREAKING commits since $LAST_TAG — skipping release"
+          fi
+
       - name: Configure git
+        if: steps.bump_check.outputs.release_needed == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Sync package.json version from latest git tag
-        run: |
-          LATEST=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
-          if [ -n "$LATEST" ]; then
-            VERSION="${LATEST#v}"
-            echo "Syncing package.json to $VERSION (from tag $LATEST)"
-            npm version "$VERSION" --no-git-tag-version --allow-same-version
-          else
-            echo "No existing version tags found, keeping package.json version"
-          fi
-
       - name: Fix package.json for npm publish
+        if: steps.bump_check.outputs.release_needed == 'true'
         run: npm pkg fix
 
       - name: Release
+        if: steps.bump_check.outputs.release_needed == 'true'
         run: npx release-it --ci
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
