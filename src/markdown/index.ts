@@ -1,6 +1,6 @@
 import { ocr, inferLayout, sortBlocksByReadingOrder } from '../index.js';
 import type { VisionBlock } from '../index.js';
-import { ping, chat, OllamaUnavailableError } from './ollama.js';
+import { ping, chat } from './ollama.js';
 import { groupByParagraph, buildUserContent, SYSTEM_PROMPT } from './prompt.js';
 import { chunkParagraphs } from './chunker.js';
 import type { ParagraphGroup } from './prompt.js';
