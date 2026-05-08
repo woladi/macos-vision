@@ -54,8 +54,12 @@ jobs:
       - name: Fix package.json for npm publish
         run: npm pkg fix
 
-      - name: Clear npm token for OIDC trusted publishing
-        run: npm config delete //registry.npmjs.org/:_authToken
+      - name: Upgrade npm and configure for OIDC trusted publishing
+        run: |
+          npm install -g npm@latest
+          npm --version
+          npm config delete //registry.npmjs.org/:_authToken
+          echo "OIDC URL set: $([[ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ]] && echo yes || echo no)"
 
       - name: Release
         run: npx release-it --ci
