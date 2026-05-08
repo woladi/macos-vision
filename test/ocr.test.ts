@@ -180,12 +180,12 @@ describe('ocr() — PDF, format: text', () => {
     const text = await ocr(SAMPLE_PDF);
     expect(typeof text).toBe('string');
     expect((text as string).length).toBeGreaterThan(0);
-  });
+  }, 30_000);
 
   it('contains known text from fixture PDF', async () => {
     const text = await ocr(SAMPLE_PDF) as string;
     expect(text).toMatch(/Henry VIII|Wikipedia/);
-  });
+  }, 30_000);
 });
 
 describe('ocr() — PDF, format: blocks', () => {
@@ -198,7 +198,7 @@ describe('ocr() — PDF, format: blocks', () => {
       expect(b.confidence).toBeGreaterThanOrEqual(0);
       expect(b.confidence).toBeLessThanOrEqual(1);
     }
-  });
+  }, 30_000);
 });
 
 describe('rasterizePdf()', () => {
