@@ -54,9 +54,11 @@ jobs:
       - name: Fix package.json for npm publish
         run: npm pkg fix
 
+      - name: Clear npm token for OIDC trusted publishing
+        run: npm config delete //registry.npmjs.org/:_authToken
+
       - name: Release
         run: npx release-it --ci
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
-          NODE_AUTH_TOKEN: ""
