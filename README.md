@@ -146,7 +146,7 @@ for (const block of layout) {
 
 ## API — Markdown pipeline (VisionScribe)
 
-`VisionScribe` converts an image or PDF to Markdown by combining Apple Vision OCR with a local LLM (via Ollama). The LLM never sees the image — it only formats text that Vision already extracted, which keeps the pipeline deterministic and prevents the hallucinations typical of cloud vision APIs.
+`VisionScribe` converts an image or PDF to Markdown by combining Apple Vision OCR with a local LLM (via Ollama). The LLM never sees the image — it only formats text that Vision already extracted. This keeps image processing local and reduces the risk of vision-model hallucinations, but Markdown reconstruction is still best-effort and depends on the local model and document complexity.
 
 ### Prerequisites
 
@@ -178,7 +178,7 @@ import { VisionScribe } from 'macos-vision/markdown';
 Image / PDF
   │
   ▼
-Apple Vision OCR          ← macOS native, deterministic, zero hallucination
+Apple Vision OCR          ← macOS native text extraction
   │  VisionBlock[] per page
   ▼
 Per-page layout inference ← each page processed independently (page-local coords)
@@ -193,7 +193,7 @@ Ollama /api/chat          ← system prompt as role:"system", OCR text as role:"
 Markdown string           ← chunk results joined with blank lines
 ```
 
-The LLM never sees the raw image; it only formats text that Apple Vision has already extracted. The system prompt instructs the model to act as a high-fidelity document parser and explicitly forbids summarising, paraphrasing, or adding content. OCR text is wrapped in `<ocr_source>` tags so the model cannot mistake it for a user asking a question. Per-page processing keeps paragraph coordinates from different pages from being mixed.
+The LLM never sees the raw image; it only formats text that Apple Vision has already extracted. The system prompt asks the model to preserve the source text, avoid summarising, and avoid adding content. OCR text is wrapped in `<ocr_source>` tags so the model is less likely to treat document text as user instructions. Per-page processing keeps paragraph coordinates from different pages from being mixed.
 
 ### `new VisionScribe(options?)`
 
@@ -236,6 +236,7 @@ for (const file of files) {
 - **Local model fidelity**: small models (`mistral-nemo`, `gemma`) may occasionally summarise or paraphrase long, dense documents. Larger models (`llama3.1:70b`, `qwen2.5:32b`) produce significantly better fidelity.
 - **Tables**: multi-column table layouts are partially supported. OCR reads cells in reading order but the LLM may not always reconstruct correct Markdown table syntax.
 - **Images / charts**: non-textual content (photos, diagrams, charts) is ignored — only text blocks extracted by Apple Vision are processed.
+- **Markdown fidelity**: the prompt strongly asks for faithful reconstruction, but LLM output is not a cryptographic or deterministic guarantee. Review important legal, financial, or compliance documents before relying on the generated Markdown.
 
 ---
 
@@ -301,6 +302,12 @@ See `src/index.ts` for full type declarations.
 | macOS only | ✅ | ❌ | ❌ |
 
 Apple Vision is the same engine used by macOS Spotlight, Live Text, and Shortcuts — highly optimized and accurate.
+
+### OCR evaluation notes
+
+In internal tests on anonymized scanned contracts, forms, declarations, and UI screenshots, Apple Vision OCR produced fewer OCR artifacts than Tesseract in most cases. The strongest gains were on multi-column contract-style scans, where Apple Vision preserved substantially more usable text with far fewer artifacts. On simpler UI screenshots, both engines performed similarly.
+
+These results are directional rather than a public benchmark suite. The corpus is not included in this repository, and future benchmark fixtures should use synthetic or public-domain documents only.
 
 ## License
 
