@@ -44,7 +44,13 @@
     "format": "prettier --write src/**/*.ts",
     "release": "release-it",
     "release:beta": "release-it --preRelease=beta",
-    "eval:setup": "git clone https://github.com/opendataloader-project/opendataloader-bench eval/bench || echo 'bench already cloned'"
+    "eval:install": "npm --prefix eval install",
+    "eval:setup": "git clone https://github.com/opendataloader-project/opendataloader-bench eval/bench || echo 'bench already cloned'",
+    "eval": "npm --prefix eval run eval",
+    "eval:resume": "npm --prefix eval run eval:resume",
+    "eval:quick": "npm --prefix eval run eval:quick",
+    "eval:report": "npm --prefix eval run eval:report",
+    "optimize-prompts": "npm --prefix eval run optimize-prompts"
   },
   "keywords": [
     "ocr",

@@ -3,3 +3,8 @@ dist/
 bin/
 .DS_Store
 *.js.map
+
+# Local benchmark data and generated eval outputs
+eval/bench/
+eval/predictions/
+eval/reports/
