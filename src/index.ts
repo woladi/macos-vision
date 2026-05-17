@@ -52,17 +52,47 @@ export interface PdfRasterizeResult {
   cacheDir: string;
 }
 
+export interface PdfPageRangeOptions {
+  /** First page to process, 1-based. Default: 1. Ignored for non-PDF inputs. */
+  startPage?: number;
+  /** Maximum number of pages to process. Default: all pages from `startPage`. Ignored for non-PDF inputs. */
+  maxPages?: number;
+}
+
+function buildPdfArgs(absPath: string, options: PdfPageRangeOptions): string[] {
+  const args: string[] = [];
+  if (options.startPage !== undefined) {
+    if (!Number.isInteger(options.startPage) || options.startPage < 1) {
+      throw new RangeError('startPage must be an integer >= 1');
+    }
+    args.push('--start-page', String(options.startPage));
+  }
+  if (options.maxPages !== undefined) {
+    if (!Number.isInteger(options.maxPages) || options.maxPages < 1) {
+      throw new RangeError('maxPages must be an integer >= 1');
+    }
+    args.push('--max-pages', String(options.maxPages));
+  }
+  args.push(absPath);
+  return args;
+}
+
 /**
  * Rasterizes a PDF to 300 DPI PNG files using the native `pdf-helper` binary
  * (PDFKit-based). Files are saved persistently to `~/.cache/macos-vision/`
  * so they can be reused by downstream tools — **caller is responsible for cleanup**.
  *
  * @param pdfPath - Absolute or relative path to the PDF file.
+ * @param options - Optional `{ startPage, maxPages }` to rasterize a page range. Both 1-based.
  * @returns An object with `pages` (sorted array of `{page, path}`) and `cacheDir`.
  */
-export async function rasterizePdf(pdfPath: string): Promise<PdfRasterizeResult> {
+export async function rasterizePdf(
+  pdfPath: string,
+  options: PdfPageRangeOptions = {}
+): Promise<PdfRasterizeResult> {
   const absPath = resolve(pdfPath);
-  const { stdout } = await execFileAsync(PDF_BIN_PATH, [absPath], {
+  const args = buildPdfArgs(absPath, options);
+  const { stdout } = await execFileAsync(PDF_BIN_PATH, args, {
     timeout: PDF_RASTERIZE_TIMEOUT_MS,
   });
   const pages: PdfPage[] = JSON.parse(stdout);
@@ -74,8 +104,12 @@ export async function rasterizePdf(pdfPath: string): Promise<PdfRasterizeResult>
  * Internal PDF OCR pipeline: rasterize via pdf-helper → OCR each page → merge.
  * PNG files are NOT cleaned up — they persist in ~/.cache/macos-vision/.
  */
-async function ocrPdf(pdfPath: string, format: 'text' | 'blocks'): Promise<string | VisionBlock[]> {
-  const { pages } = await rasterizePdf(pdfPath);
+async function ocrPdf(
+  pdfPath: string,
+  format: 'text' | 'blocks',
+  range: PdfPageRangeOptions = {}
+): Promise<string | VisionBlock[]> {
+  const { pages } = await rasterizePdf(pdfPath, range);
   if (format === 'blocks') {
     const all: VisionBlock[] = [];
     for (const { page, path: pagePath } of pages) {
@@ -110,23 +144,29 @@ export interface VisionBlock {
   page?: number;
 }
 
-export interface OcrOptions {
+export interface OcrOptions extends PdfPageRangeOptions {
   /** Return plain text (default) or structured blocks with coordinates */
   format?: 'text' | 'blocks';
 }
 
-export async function ocr(imagePath: string, options?: { format?: 'text' }): Promise<string>;
-export async function ocr(imagePath: string, options: { format: 'blocks' }): Promise<VisionBlock[]>;
+export async function ocr(
+  imagePath: string,
+  options?: OcrOptions & { format?: 'text' }
+): Promise<string>;
+export async function ocr(
+  imagePath: string,
+  options: OcrOptions & { format: 'blocks' }
+): Promise<VisionBlock[]>;
 export async function ocr(
   imagePath: string,
   options: OcrOptions = {}
 ): Promise<string | VisionBlock[]> {
   const absPath = resolve(imagePath);
-  const { format = 'text' } = options;
+  const { format = 'text', startPage, maxPages } = options;
 
-  // ── PDF fast-path: rasterize via sips, then OCR each page ────────────
+  // ── PDF fast-path: rasterize via pdf-helper, then OCR each page ──────
   if (await isPdf(absPath)) {
-    return ocrPdf(absPath, format);
+    return ocrPdf(absPath, format, { startPage, maxPages });
   }
 
   // ── Existing image path (unchanged) ─────────────────────────────────

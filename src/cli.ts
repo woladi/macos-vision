@@ -30,6 +30,10 @@ Vision options:
   --classify             Image classification
   --all                  Run all of the above
 
+PDF page range (PDFs only; ignored for images):
+  --start-page <N>       First page to process, 1-based (default: 1)
+  --max-pages <M>        Maximum number of pages to process (default: all)
+
 Markdown options (requires Ollama running locally):
   --markdown             Convert image/PDF to Markdown via VisionScribe + Ollama
   --model <name>         Ollama model name (default: mistral-nemo)
@@ -43,6 +47,7 @@ Examples:
   macos-vision photo.jpg
   macos-vision --blocks --faces photo.jpg
   macos-vision --all photo.jpg
+  macos-vision --start-page 1 --max-pages 2 report.pdf
   macos-vision --markdown invoice.pdf -o notes.md
   macos-vision --markdown receipt.jpg --stdout
 `.trim();
@@ -68,6 +73,24 @@ const argv = [...rawArgs];
 const model = takeOpt('--model', argv);
 const ollamaUrl = takeOpt('--ollama-url', argv);
 const outPath = takeOpt('-o', argv) ?? takeOpt('--output', argv);
+const startPageRaw = takeOpt('--start-page', argv);
+const maxPagesRaw = takeOpt('--max-pages', argv);
+
+function parsePageOpt(name: string, raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) {
+    console.error(`Error: ${name} must be an integer >= 1 (got "${raw}")`);
+    process.exit(1);
+  }
+  return n;
+}
+
+const startPage = parsePageOpt('--start-page', startPageRaw);
+const maxPages = parsePageOpt('--max-pages', maxPagesRaw);
+const pageRange: { startPage?: number; maxPages?: number } = {};
+if (startPage !== undefined) pageRange.startPage = startPage;
+if (maxPages !== undefined) pageRange.maxPages = maxPages;
 
 const flags = new Set(argv.filter((a) => a.startsWith('--')));
 const fileArgs = argv.filter((a) => !a.startsWith('-'));
@@ -110,11 +133,7 @@ if (flags.has('--markdown')) {
     }
 
     const finalPath =
-      outPath ??
-      join(
-        dirname(inputPath),
-        basename(inputPath, extname(inputPath)) + '.md',
-      );
+      outPath ?? join(dirname(inputPath), basename(inputPath, extname(inputPath)) + '.md');
 
     await writeFile(finalPath, markdown, 'utf8');
     process.stderr.write(`Saved: ${finalPath}\n`);
@@ -149,12 +168,15 @@ if (flags.has('--markdown')) {
   (async () => {
     try {
       if (useDefault || runOcr) {
-        const text = await ocr(inputPath);
+        const text = await ocr(inputPath, pageRange);
         console.log(text as string);
       }
 
       if (runBlocks) {
-        const blocks = (await ocr(inputPath, { format: 'blocks' })) as VisionBlock[];
+        const blocks = (await ocr(inputPath, {
+          format: 'blocks',
+          ...pageRange,
+        })) as VisionBlock[];
         console.log(JSON.stringify(blocks, null, 2));
       }
 

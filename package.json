@@ -1,6 +1,6 @@
 {
   "name": "macos-vision",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Apple Vision OCR + image/PDF analysis for Node.js, with optional Ollama-driven Markdown pipeline — native, fast, offline",
   "author": "Adrian Wolczuk",
   "license": "MIT",

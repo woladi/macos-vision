@@ -24,21 +24,66 @@ func encodeJSON<T: Encodable>(_ value: T) -> String {
 
 // ─── Argument parsing ─────────────────────────────────────────────────────────
 
-let args = CommandLine.arguments
-guard args.count >= 2 else {
-    fail("Usage: pdf-helper <path-to-pdf>")
+// Flags may appear in any order relative to the positional <path>.
+//   pdf-helper [--start-page N] [--max-pages M] <path-to-pdf>
+// `startPage` is 1-based for user-facing CLI; `PageResult.page` stays 0-based.
+
+var pdfPath: String?
+var startPage: Int = 1
+var maxPages: Int = Int.max
+
+let argv = CommandLine.arguments
+var i = 1
+while i < argv.count {
+    let arg = argv[i]
+    switch arg {
+    case "--start-page":
+        guard i + 1 < argv.count, let v = Int(argv[i + 1]) else {
+            fail("--start-page requires a positive integer")
+        }
+        guard v >= 1 else { fail("--start-page must be >= 1") }
+        startPage = v
+        i += 2
+    case "--max-pages":
+        guard i + 1 < argv.count, let v = Int(argv[i + 1]) else {
+            fail("--max-pages requires a positive integer")
+        }
+        guard v >= 1 else { fail("--max-pages must be >= 1") }
+        maxPages = v
+        i += 2
+    default:
+        if pdfPath == nil {
+            pdfPath = arg
+        } else {
+            fail("Unexpected argument: \(arg)")
+        }
+        i += 1
+    }
 }
 
-let pdfPath = args[1]
-let pdfURL = URL(fileURLWithPath: pdfPath)
+guard let resolvedPath = pdfPath else {
+    fail("Usage: pdf-helper [--start-page N] [--max-pages M] <path-to-pdf>")
+}
+
+let pdfURL = URL(fileURLWithPath: resolvedPath)
 
 guard let pdf = PDFDocument(url: pdfURL) else {
-    fail("Cannot open PDF: \(pdfPath)")
+    fail("Cannot open PDF: \(resolvedPath)")
 }
 
 let pageCount = pdf.pageCount
 guard pageCount > 0 else {
-    fail("PDF has no pages: \(pdfPath)")
+    fail("PDF has no pages: \(resolvedPath)")
+}
+
+// Convert 1-based startPage to 0-based; clamp endIdx to pageCount.
+let startIdx = startPage - 1
+let endIdx = min(startIdx + maxPages, pageCount)
+
+// startPage past the end → empty array, not an error.
+if startIdx >= pageCount {
+    print(encodeJSON([PageResult]()))
+    exit(0)
 }
 
 // ─── Output directory: ~/.cache/macos-vision/{basename}-{uuid}/ ───────────────
@@ -62,9 +107,9 @@ let scale: CGFloat = 300.0 / 72.0
 
 var results: [PageResult] = []
 
-for pageIndex in 0..<pageCount {
+for pageIndex in startIdx..<endIdx {
     guard let page = pdf.page(at: pageIndex) else {
-        fail("Cannot access page \(pageIndex) of \(pdfPath)")
+        fail("Cannot access page \(pageIndex) of \(resolvedPath)")
     }
 
     let mediaBox = page.bounds(for: .mediaBox)
