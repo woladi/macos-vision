@@ -266,6 +266,8 @@ The `VisionScribe` API, the system prompt, and the chunking strategy are unchang
 |-----------|------|---------|-------------|
 | `imagePath` | `string` | — | Path to image (PNG, JPG, JPEG, WEBP) or PDF |
 | `options.format` | `'text' \| 'blocks'` | `'text'` | Plain text or structured blocks with coordinates |
+| `options.startPage` | `number` | `1` | PDFs only — first page to OCR, 1-based. Ignored for images. |
+| `options.maxPages` | `number` | all | PDFs only — maximum number of pages to OCR. Ignored for images. |
 
 Returns `Promise<string>` or `Promise<VisionBlock[]>`.
 
@@ -280,6 +282,35 @@ interface VisionBlock {
   page?: number   // 0-based, only for PDFs
 }
 ```
+
+### PDF page range
+
+Both `ocr()` and `rasterizePdf()` accept `startPage` (1-based) and `maxPages` to process a subset of pages — useful when the caller only needs a preview, the first few pages, or a specific section of a long document.
+
+```ts
+// First two pages only
+const headText = await ocr('report.pdf', { startPage: 1, maxPages: 2 });
+
+// Page 5 only, as structured blocks
+const blocks = await ocr('report.pdf', { format: 'blocks', startPage: 5, maxPages: 1 });
+
+// Rasterize a range without OCR
+const { pages } = await rasterizePdf('report.pdf', { startPage: 1, maxPages: 2 });
+```
+
+From the CLI:
+
+```bash
+macos-vision --start-page 1 --max-pages 2 report.pdf
+macos-vision --blocks --start-page 5 --max-pages 1 report.pdf
+```
+
+Notes:
+
+- Values must be integers `>= 1`. Out-of-range values throw `RangeError` (JS) or exit non-zero (CLI).
+- `startPage` past the end of the document returns an empty result — not an error.
+- `VisionBlock.page` and `PdfPage.page` in the response are still 0-based (legacy behaviour).
+- For non-PDF inputs, both options are silently ignored.
 
 ### `detectFaces(imagePath)` / `detectBarcodes(imagePath)` / `detectRectangles(imagePath)` / `detectDocument(imagePath)` / `classify(imagePath)`
 
