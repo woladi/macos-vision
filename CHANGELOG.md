@@ -1,22 +1,49 @@
 # Changelog
 
+## 1.5.0
+
+### Minor Changes
+
+- e2fb65a: Prebuilt native binaries: `vision-helper` and `pdf-helper` are now downloaded as
+  prebuilt artifacts from the matching GitHub Release on install instead of being
+  compiled from source. Xcode Command Line Tools are no longer required for the
+  common path; they are still used as an offline fallback when the download
+  cannot succeed (no network, custom registry, unpublished version, or
+  `MACOS_VISION_SKIP_DOWNLOAD=1`).
+
+  Both `arm64` and `x86_64` macOS are supported. Tarballs are SHA-256-verified
+  against the matching `.sha256` file in the release.
+
+  Also: release pipeline migrated from `release-it` to `@changesets/cli` +
+  `changesets/action`, publishing to npm via OIDC Trusted Publishing with
+  Sigstore provenance.
+
+- e2fb65a: Add `startPage` and `maxPages` options to `rasterizePdf()` and `ocr()`, plus
+  matching `--start-page` and `--max-pages` CLI flags. Lets callers process a
+  page range instead of the whole PDF — useful for long documents where only
+  the first few pages are needed (previews, classification, head-of-document
+  extraction).
+
+  User-facing input is 1-based; `PdfPage.page` / `VisionBlock.page` in the
+  response remain 0-based to preserve backward compatibility.
+
 ## [1.2.0](https://github.com/woladi/macos-vision/compare/v1.1.0...v1.2.0) (2026-04-09)
 
 ### Features
 
-* replace sips with PDFKit-based pdf-helper binary for PDF rasterization ([4a223e2](https://github.com/woladi/macos-vision/commit/4a223e2de79571794d866452fd5e87b84590ff0d))
+- replace sips with PDFKit-based pdf-helper binary for PDF rasterization ([4a223e2](https://github.com/woladi/macos-vision/commit/4a223e2de79571794d866452fd5e87b84590ff0d))
 
 ## [1.1.0](https://github.com/woladi/macos-vision/compare/v1.0.3...v1.1.0) (2026-04-09)
 
 ### Features
 
-* add PDF support via sips rasterization ([a48bf17](https://github.com/woladi/macos-vision/commit/a48bf17579a6df11aed6eadbde4fa5041ccaa981))
+- add PDF support via sips rasterization ([a48bf17](https://github.com/woladi/macos-vision/commit/a48bf17579a6df11aed6eadbde4fa5041ccaa981))
 
 ## [1.0.3](https://github.com/woladi/macos-vision/compare/v1.0.2...v1.0.3) (2026-04-08)
 
 ### Reverts
 
-* remove socket.ignore field — worsens supply chain risk score ([a1827ad](https://github.com/woladi/macos-vision/commit/a1827ad489220ebb7a2e8c85632945fe969438db))
+- remove socket.ignore field — worsens supply chain risk score ([a1827ad](https://github.com/woladi/macos-vision/commit/a1827ad489220ebb7a2e8c85632945fe969438db))
 
 ## [1.0.2](https://github.com/woladi/macos-vision/compare/v1.0.1...v1.0.2) (2026-04-08)
 
@@ -28,17 +55,17 @@
 
 ### Features
 
-* add inferLayout() — unified reading-order LayoutBlock representation ([aec507e](https://github.com/woladi/macos-vision/commit/aec507eb7cf133ec1e56759c0945563a48d871ee))
+- add inferLayout() — unified reading-order LayoutBlock representation ([aec507e](https://github.com/woladi/macos-vision/commit/aec507eb7cf133ec1e56759c0945563a48d871ee))
 
 ## [0.2.0](https://github.com/woladi/macos-vision/compare/v0.1.4...v0.2.0) (2026-04-08)
 
 ### Features
 
-* add confidence to VisionBlock and Barcode ([a87df27](https://github.com/woladi/macos-vision/commit/a87df275e51dec4b57fbff6e3bffc4220b96b4d7))
+- add confidence to VisionBlock and Barcode ([a87df27](https://github.com/woladi/macos-vision/commit/a87df275e51dec4b57fbff6e3bffc4220b96b4d7))
 
 ### Bug Fixes
 
-* correct mkdirSync, CLI error on missing file, execFile timeout, README scope ([1cef2c7](https://github.com/woladi/macos-vision/commit/1cef2c7078430c9182fcd39792cf0c002833203f))
-* replace try? with do/catch in Swift helper — surface Vision errors properly ([f287065](https://github.com/woladi/macos-vision/commit/f2870655225806070be3db462ea15923201fecbf))
+- correct mkdirSync, CLI error on missing file, execFile timeout, README scope ([1cef2c7](https://github.com/woladi/macos-vision/commit/1cef2c7078430c9182fcd39792cf0c002833203f))
+- replace try? with do/catch in Swift helper — surface Vision errors properly ([f287065](https://github.com/woladi/macos-vision/commit/f2870655225806070be3db462ea15923201fecbf))
 
 ## 0.1.4 (2026-04-08)
