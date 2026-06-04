@@ -70,6 +70,16 @@ jobs:
       - name: Build native binaries (arm64 + x86_64)
         run: node scripts/build-native-cross.js
 
+      # npm bundled with Node 22 (10.x) does not support OIDC Trusted Publishing.
+      # Upgrade to the latest npm and clear the placeholder _authToken that
+      # setup-node injects when registry-url is set — without this, `npm publish`
+      # tries to authenticate with `XXXXX-XXXXX-…` and the registry returns 404.
+      - name: Prepare npm for OIDC trusted publishing
+        run: |
+          npm install -g npm@latest
+          npm --version
+          npm config delete //registry.npmjs.org/:_authToken || true
+
       - id: changesets
         uses: changesets/action@v1
         with:
