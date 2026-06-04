@@ -1,71 +1,95 @@
 name: Release
 
+# This pipeline runs on every push to `main` and decides at runtime what to do:
+#
+#   · pending `.changeset/*.md` files     → open / update a "Version Packages" PR
+#                                            that bumps versions and refreshes CHANGELOG.
+#   · "Version Packages" PR just merged   → run `npm run release` which calls
+#                                            `changeset publish` → `npm publish`.
+#                                            Then prebuilt native binaries are
+#                                            uploaded as assets to the GitHub
+#                                            Release that changesets/action just
+#                                            created.
+#
+# Auth to npm is via Trusted Publishing (OIDC). There is NO NPM_TOKEN secret.
+# Provenance is opt-in via package.json#publishConfig.provenance=true; npm CLI
+# requests an OIDC token from the runner and attaches a Sigstore attestation.
+#
+# Prerequisite (one-off, done in the npm web UI):
+#   npmjs.com → Package → Settings → Trusted Publishers
+#     Add GitHub Actions publisher matching:
+#       owner=woladi · repo=macos-vision · workflow=release.yml
+#       environment= (leave empty — no environment gate)
+
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - ".github/workflows/**"
   workflow_dispatch:
+
+permissions:
+  contents: write       # changesets/action commits the "Version Packages" PR
+                        # and creates the GitHub Release at publish time
+  pull-requests: write  # …and opens / updates that PR
+  id-token: write       # OIDC token for npm Trusted Publishing + provenance
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
-    runs-on: macos-latest
-
-    permissions:
-      contents: write
-      id-token: write
-
+    name: Build & release
+    runs-on: macos-latest   # swiftc only ships with macOS
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          registry-url: https://registry.npmjs.org/
+          node-version: 22
+          cache: npm
+          # registry-url is what makes `npm publish` use OIDC: setup-node writes
+          # the right `.npmrc` so the npm CLI requests an OIDC token from the
+          # actions runner and exchanges it with npm.
+          registry-url: "https://registry.npmjs.org"
 
-      - name: Install dependencies
-        run: npm ci
+      - run: npm ci
         env:
           HUSKY: 0
+          MACOS_VISION_SKIP_DOWNLOAD: "1"   # don't try to fetch prebuilt while
+                                            # building the package that ships them
 
-      - name: Build
-        run: npm run build
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run test
 
-      - name: Test
-        run: npm run test
+      # Pre-build native helpers for both arches so the tarballs are ready the
+      # moment changesets/action creates the GitHub Release below.
+      - name: Build native binaries (arm64 + x86_64)
+        run: node scripts/build-native-cross.js
 
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Sync package.json version from latest git tag
-        run: |
-          LATEST=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
-          if [ -n "$LATEST" ]; then
-            VERSION="${LATEST#v}"
-            echo "Syncing package.json to $VERSION (from tag $LATEST)"
-            npm version "$VERSION" --no-git-tag-version --allow-same-version
-          else
-            echo "No existing version tags found, keeping package.json version"
-          fi
-
-      - name: Fix package.json for npm publish
-        run: npm pkg fix
-
-      - name: Upgrade npm and configure for OIDC trusted publishing
-        run: |
-          npm install -g npm@latest
-          npm --version
-          npm config delete //registry.npmjs.org/:_authToken
-          echo "OIDC URL set: $([[ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ]] && echo yes || echo no)"
-
-      - name: Release
-        run: npx release-it --ci
+      - id: changesets
+        uses: changesets/action@v1
+        with:
+          publish: npm run release
+          title: "chore(release): version packages"
+          commit: "chore(release): version packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_CONFIG_PROVENANCE: "true"
+          # NPM_TOKEN intentionally absent — Trusted Publishing handles auth.
+
+      # When a publish happened, changesets/action created vX.Y.Z tag + GH
+      # Release. Attach the prebuilt binaries to that release so the user-side
+      # postinstall (scripts/install-native.js) can download them.
+      - name: Upload native binaries to GitHub Release
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          gh release upload "v${VERSION}" \
+            bin-darwin-arm64.tar.gz bin-darwin-arm64.tar.gz.sha256 \
+            bin-darwin-x64.tar.gz   bin-darwin-x64.tar.gz.sha256 \
+            --clobber

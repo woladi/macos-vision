@@ -6,10 +6,10 @@ Uses macOS's built-in [Vision framework](https://developer.apple.com/documentati
 
 ## Requirements
 
-- macOS 12+
+- macOS 12+ (Apple Silicon or Intel)
 - Node.js 18+
-- Xcode Command Line Tools (`xcode-select --install`)
 - [Ollama](https://ollama.com) running locally — only if you use the Markdown pipeline
+- Xcode Command Line Tools (`xcode-select --install`) — **only** needed as an offline fallback when prebuilt binaries cannot be downloaded
 
 ## Installation
 
@@ -17,7 +17,7 @@ Uses macOS's built-in [Vision framework](https://developer.apple.com/documentati
 npm install macos-vision
 ```
 
-The native Swift binaries (`vision-helper`, `pdf-helper`) are compiled automatically on install.
+The native Swift binaries (`vision-helper`, `pdf-helper`) are downloaded as prebuilt artifacts from the matching GitHub Release (signed by SHA-256). If the download fails (no network, custom registry, unpublished version), the postinstall falls back to compiling locally with `swiftc` — that's the only path that needs Xcode Command Line Tools. Set `MACOS_VISION_SKIP_DOWNLOAD=1` to force local compilation.
 
 ## What you get
 

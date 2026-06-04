@@ -1,6 +1,8 @@
 node_modules/
 dist/
 bin/
+bin-darwin-*.tar.gz
+bin-darwin-*.tar.gz.sha256
 .DS_Store
 *.js.map
 

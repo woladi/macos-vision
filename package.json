@@ -1,6 +1,6 @@
 {
   "name": "macos-vision",
-  "version": "2.1.0",
+  "version": "1.4.0",
   "description": "Apple Vision OCR + image/PDF analysis for Node.js, with optional Ollama-driven Markdown pipeline — native, fast, offline",
   "author": "Adrian Wolczuk",
   "license": "MIT",
@@ -22,19 +22,22 @@
   },
   "files": [
     "dist",
-    "bin",
-    "scripts/build-native.js",
+    "scripts/install-native.js",
     "src/native",
     "README.md",
     "LICENSE"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/woladi/macos-vision.git"
   },
   "scripts": {
-    "build-native": "node scripts/build-native.js",
-    "postinstall": "node scripts/build-native.js",
+    "build-native": "node scripts/build-native-cross.js",
+    "postinstall": "node scripts/install-native.js",
     "build": "tsc",
     "prepublishOnly": "npm run build",
     "test": "vitest run",
@@ -42,8 +45,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/**/*.ts",
     "format": "prettier --write src/**/*.ts",
-    "release": "release-it",
-    "release:beta": "release-it --preRelease=beta",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "npm run build && changeset publish",
     "eval:install": "npm --prefix eval install",
     "eval:setup": "git clone https://github.com/opendataloader-project/opendataloader-bench eval/bench || echo 'bench already cloned'",
     "eval": "npm --prefix eval run eval",
@@ -86,16 +90,15 @@
     "node": ">=18.0.0"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.0",
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
-    "@release-it/conventional-changelog": "^10.0.6",
     "@types/node": "^20.0.0",
     "eslint": "^10.2.0",
     "eslint-config-prettier": "^10.1.8",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "prettier": "^3.8.1",
-    "release-it": "^19.2.4",
     "typescript": "^5.4.0",
     "typescript-eslint": "^8.58.0",
     "vitest": "^2.1.9"
