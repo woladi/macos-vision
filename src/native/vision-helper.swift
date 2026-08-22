@@ -613,7 +613,12 @@ func runSmudge() -> SmudgeResult {
     close(savedStdout)
     let noise = (try? String(contentsOfFile: tmp, encoding: .utf8)) ?? ""
     unlink(tmp)
-    if let e = failure { fail("Vision lens smudge detection failed: \(e.localizedDescription)") }
+    // A throw here means the smudge model is not usable on this machine — the
+    // image already loaded, and CI runners without the model raise
+    // Foundation._GenericObjCError.nilError rather than logging the notice below.
+    // Report it as unsupported, which is this request's documented contract,
+    // instead of failing the whole call.
+    if failure != nil { return SmudgeResult(confidence: 0, supported: false) }
     let supported = !noise.contains("Unable to find")
     return SmudgeResult(confidence: conf, supported: supported)
 }
