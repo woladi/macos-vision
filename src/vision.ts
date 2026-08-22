@@ -277,14 +277,12 @@ export interface AestheticsScore {
 }
 
 /** Photo aesthetics + utility flag (macOS 15+). Good for "is this a screenshot or a photo?". */
-export async function imageAesthetics(imagePath: string): Promise<AestheticsScore | null> {
-  try {
-    return await run<AestheticsScore | null>(['--aesthetics', resolve(imagePath)]);
-  } catch (err) {
-    if ((err as { code?: number }).code === 2)
-      throw new UnsupportedOnThisMacOSError('imageAesthetics', '15');
-    throw err;
-  }
+export function imageAesthetics(imagePath: string): Promise<AestheticsScore | null> {
+  return gated<AestheticsScore | null>(
+    ['--aesthetics', resolve(imagePath)],
+    'imageAesthetics',
+    '15'
+  );
 }
 
 export interface Horizon {

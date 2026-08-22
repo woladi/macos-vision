@@ -6,7 +6,7 @@ Uses macOS's built-in [Vision framework](https://developer.apple.com/documentati
 
 ## Requirements
 
-- macOS 13+ (Apple Silicon or Intel) — some features need newer macOS (see `visionCapabilities()`)
+- macOS 12+ (Apple Silicon or Intel) — some features need newer macOS (see `visionCapabilities()`)
 - Node.js 20+
 - [Ollama](https://ollama.com) running locally — only if you use the Markdown pipeline
 - Xcode Command Line Tools (`xcode-select --install`) — **only** needed as an offline fallback when prebuilt binaries cannot be downloaded

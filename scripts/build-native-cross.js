@@ -8,8 +8,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
 const TARGETS = [
-  { arch: 'arm64', swift: 'arm64-apple-macos13' },
-  { arch: 'x64', swift: 'x86_64-apple-macos13' },
+  { arch: 'arm64', swift: 'arm64-apple-macos12' },
+  { arch: 'x64', swift: 'x86_64-apple-macos12' },
 ];
 const HELPERS = ['vision-helper', 'pdf-helper', 'ui-helper'];
 
@@ -27,6 +27,20 @@ function sdkDefines() {
 }
 
 const DEFINES = sdkDefines().join(' ');
+
+// Release artifacts must carry every gated feature. Building on an older SDK
+// would silently ship binaries where documentStructure/aesthetics report false
+// on machines that actually support them — fail loudly instead.
+const REQUIRED_DEFINES = ['-DSDK_14', '-DSDK_15', '-DSDK_26'];
+const missing = REQUIRED_DEFINES.filter((d) => !DEFINES.includes(d));
+if (missing.length) {
+  console.error(
+    `❌ macos-vision: SDK too old for a release build — missing ${missing.join(', ')}.\n` +
+      `   Features gated behind those SDKs would be compiled out of the published binaries.\n` +
+      `   Install a newer Xcode (or set SKIP_SDK_CHECK=1 for a local, non-release build).`
+  );
+  if (!process.env.SKIP_SDK_CHECK) process.exit(1);
+}
 
 for (const { arch, swift } of TARGETS) {
   const outDir = path.join(root, 'bin', `darwin-${arch}`);

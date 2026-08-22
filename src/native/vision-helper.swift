@@ -388,9 +388,11 @@ let ocrNoCorrection = args.contains("--no-correction")
 let ocrFast = args.contains("--fast")
 let ocrMinHeight: Float? = optValue("--min-text-height").flatMap { Float($0) }
 
-// Region of interest: normalized x,y,w,h with TOP-LEFT origin (same space as our output).
-// Vision wants bottom-left origin, so flip. Results stay relative to the full image
-// because the handler reports observations in full-image coordinates.
+// Region of interest: normalized x,y,w,h with TOP-LEFT origin (same space as our
+// output). Vision wants bottom-left origin, so flip. Vision then reports
+// observations RELATIVE TO THE ROI, so every bounding box must go back through
+// unROI() to land in full-image space — verified empirically: with and without an
+// ROI the same text yields identical coordinates only when unROI is applied.
 var roiRect: CGRect? = nil
 if let roi = optValue("--roi") {
     let p = roi.split(separator: ",").compactMap { Double($0) }
@@ -436,7 +438,9 @@ if isJsonMode || (!isFaces && !isBarcodes && !isRectangles && !isDocument && !is
     }
     request.recognitionLevel = ocrFast ? .fast : .accurate
     if !ocrLanguages.isEmpty { request.recognitionLanguages = ocrLanguages }
-    if ocrAutoLang { request.automaticallyDetectsLanguage = true }
+    if ocrAutoLang {
+        if #available(macOS 13.0, *) { request.automaticallyDetectsLanguage = true }
+    }
     request.usesLanguageCorrection = !ocrNoCorrection
     if !ocrCustomWords.isEmpty { request.customWords = ocrCustomWords }
     if let mh = ocrMinHeight { request.minimumTextHeight = mh }

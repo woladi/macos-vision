@@ -2,7 +2,7 @@ import { resolve, dirname, extname } from 'path';
 import { open, readFile, writeFile, mkdir } from 'fs/promises';
 import { homedir } from 'os';
 import { VISION_BIN, PDF_BIN, execHelper, runHelper, fileSha256, sha256 } from './helper.js';
-import { textOptionArgs } from './vision.js';
+import { textOptionArgs, visionCapabilities } from './vision.js';
 import type { TextRecognitionOptions } from './vision.js';
 
 const BINARY_TIMEOUT_MS = 30_000;
@@ -122,13 +122,20 @@ async function ocrPdf(
 
 // ─── OCR result cache ────────────────────────────────────────────────────────
 
-/** Content hash + the canonical helper argv, so option order does not matter. */
+/**
+ * Content hash + the canonical helper argv, so option order does not matter.
+ * The helper and macOS versions are part of the key: both change what Vision
+ * returns for identical input, so entries must not survive an upgrade.
+ */
 async function cacheKey(
   absPath: string,
   format: string,
   opts: TextRecognitionOptions
 ): Promise<string> {
-  return sha256((await fileSha256(absPath)) + JSON.stringify([format, ...textOptionArgs(opts)]));
+  const [hash, caps] = await Promise.all([fileSha256(absPath), visionCapabilities()]);
+  return sha256(
+    hash + JSON.stringify([caps.helperVersion, caps.macosVersion, format, ...textOptionArgs(opts)])
+  );
 }
 
 async function readCache<T>(key: string): Promise<T | undefined> {
