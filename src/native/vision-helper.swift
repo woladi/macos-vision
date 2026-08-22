@@ -176,8 +176,29 @@ func macOSVersionString() -> String {
     return "\(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
 }
 
+let macOS14 = ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 14, minorVersion: 0, patchVersion: 0))
 let macOS15 = ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0))
 let macOS26 = ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0))
+
+// A symbol introduced in a newer SDK is simply absent when the helper is built
+// against an older one — which is exactly what the swiftc fallback does on an
+// older Mac. So each modern feature is gated twice: at compile time on the SDK
+// (-DSDK_nn, set by the build scripts) and at runtime on #available.
+#if SDK_14
+let sdk14 = true
+#else
+let sdk14 = false
+#endif
+#if SDK_15
+let sdk15 = true
+#else
+let sdk15 = false
+#endif
+#if SDK_26
+let sdk26 = true
+#else
+let sdk26 = false
+#endif
 let iso8601 = ISO8601DateFormatter()
 
 func supportedLanguages() -> [String] {
@@ -262,11 +283,11 @@ if args.contains("--capabilities") {
             "ocr": true, "ocrOptions": true, "faces": true, "barcodes": true,
             "rectangles": true, "document": true, "classify": true,
             "textRects": true, "compare": true, "entities": true,
-            "documentStructure": macOS26, "lensSmudge": macOS26,
+            "documentStructure": macOS26 && sdk26, "lensSmudge": macOS26 && sdk26,
             "faceLandmarks": true, "humans": true, "bodyPose": true, "handPose": true,
-            "animals": true, "animalPose": true, "horizon": true, "contours": true,
-            "saliency": true, "foregroundMask": true, "personMask": true,
-            "aesthetics": macOS15, "documentCrop": true, "crop": true, "imageInfo": true,
+            "animals": true, "animalPose": macOS14 && sdk14, "horizon": true, "contours": true,
+            "saliency": true, "foregroundMask": macOS14 && sdk14, "personMask": true,
+            "aesthetics": macOS15 && sdk15, "documentCrop": true, "crop": true, "imageInfo": true,
         ]
     )
     emit(encodeJSON(caps))
@@ -442,6 +463,7 @@ if isTextRects {
 
 // ─── macOS 26+: document structure & lens smudge (new Vision Swift API) ──────
 
+#if SDK_26
 @available(macOS 26.0, *)
 func region(_ r: NormalizedRegion) -> DocRegion {
     let b = r.boundingBox
@@ -591,20 +613,25 @@ func runSmudge() -> SmudgeResult {
     let supported = !noise.contains("Unable to find")
     return SmudgeResult(confidence: conf, supported: supported)
 }
+#endif
 
 if isStructure {
+#if SDK_26
     if #available(macOS 26.0, *) {
         if let s = runDocumentStructure() { emit(encodeJSON(s)) }
         exit(0)
     }
+#endif
     fail("--document-structure requires macOS 26 or newer", code: 2)
 }
 
 if isSmudge {
+#if SDK_26
     if #available(macOS 26.0, *) {
         emit(encodeJSON(runSmudge()))
         exit(0)
     }
+#endif
     fail("--smudge requires macOS 26 or newer", code: 2)
 }
 
@@ -782,6 +809,7 @@ if isHandPose {
 }
 
 if isAnimalPose {
+#if SDK_14
     if #available(macOS 14.0, *) {
         let request = VNDetectAnimalBodyPoseRequest()
         perform([request], "animal pose")
@@ -791,6 +819,7 @@ if isAnimalPose {
         emit(encodeJSON(results))
         exit(0)
     }
+#endif
     fail("--animal-pose requires macOS 14 or newer", code: 2)
 }
 
@@ -876,6 +905,7 @@ if isSaliency {
 // ─── Foreground subject cutout / person mask ─────────────────────────────────
 
 if isForeground {
+#if SDK_14
     if #available(macOS 14.0, *) {
         let out = requireOut()
         let request = VNGenerateForegroundInstanceMaskRequest()
@@ -896,6 +926,7 @@ if isForeground {
         emit(encodeJSON(MaskResult(instances: o.allInstances.count, outPath: out)))
         exit(0)
     }
+#endif
     fail("--foreground-mask requires macOS 14 or newer", code: 2)
 }
 
@@ -916,6 +947,7 @@ if isPersonMask {
 // ─── Aesthetics (macOS 15+) ──────────────────────────────────────────────────
 
 if isAesthetics {
+#if SDK_15
     if #available(macOS 15.0, *) {
         let request = VNCalculateImageAestheticsScoresRequest()
         perform([request], "aesthetics")
@@ -926,6 +958,7 @@ if isAesthetics {
         emit(encodeJSON(AestheticsResult(overallScore: o.overallScore, isUtility: o.isUtility)))
         exit(0)
     }
+#endif
     fail("--aesthetics requires macOS 15 or newer", code: 2)
 }
 

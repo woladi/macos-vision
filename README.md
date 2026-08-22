@@ -167,6 +167,8 @@ const caps = await visionCapabilities();
 // { helperVersion, macosVersion, ocrLanguages: ['en-US','pl-PL',…], features: { documentStructure, foregroundMask, … } }
 ```
 
+A feature is reported `true` only when both this macOS **and** the SDK the helper was built against provide it. Anything reported `false` raises `UnsupportedOnThisMacOSError` rather than failing obscurely, so an agent can branch on `caps.features` before planning work.
+
 ### OCR tuning
 
 `ocr()` now accepts Vision's recognition knobs. Results for `regionOfInterest` are still reported in full-image coordinates.

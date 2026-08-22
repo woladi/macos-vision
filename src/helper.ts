@@ -28,6 +28,26 @@ export class UnsupportedOnThisMacOSError extends Error {
   }
 }
 
+/**
+ * Helpers report failures as `ERROR: <what went wrong>` on stderr. Surface that
+ * line instead of Node's `Command failed: /long/path/to/helper --flags …`,
+ * keeping `code` so callers can still recognise the "unsupported" status.
+ */
+function helperError(err: unknown, stderr: string): Error {
+  const raw = err as { message?: string; code?: number };
+  const reported = stderr
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.startsWith('ERROR: '));
+  const error = new Error(
+    reported ? reported.slice('ERROR: '.length) : (raw.message ?? String(err))
+  ) as Error & { code?: number; stderr?: string };
+  if (raw.code !== undefined) error.code = raw.code;
+  // Kept for callers that inspect a non-helper tool's output (e.g. screencapture).
+  error.stderr = stderr;
+  return error;
+}
+
 export interface ExecOptions {
   timeout?: number;
   /** Written to the helper's stdin, then closed. */
@@ -41,7 +61,7 @@ export function execHelper(bin: string, args: string[], opts: ExecOptions = {}):
       bin,
       args,
       { timeout: opts.timeout ?? 30_000, maxBuffer: 64 * 1024 * 1024 },
-      (err, stdout) => (err ? reject(err) : resolvePromise(stdout))
+      (err, stdout, stderr) => (err ? reject(helperError(err, stderr)) : resolvePromise(stdout))
     );
     if (opts.input !== undefined) child.stdin?.end(opts.input);
   });

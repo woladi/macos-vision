@@ -283,7 +283,7 @@ if (flags.has('--markdown')) {
         console.log(JSON.stringify(await fn(), null, 2));
       }
     } catch (error) {
-      console.error('Error:', error);
+      console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
       process.exit(1);
     }
   })();

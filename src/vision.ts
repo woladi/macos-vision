@@ -410,31 +410,12 @@ export interface Contours {
 }
 
 /** Edge/shape contours — useful for charts, diagrams, UI boundaries. */
-export async function detectContours(
-  imagePath: string,
-  options: ContourOptions = {}
-): Promise<Contours> {
+export function detectContours(imagePath: string, options: ContourOptions = {}): Promise<Contours> {
   const args = ['--contours'];
   if (options.maxPoints) args.push('--max-points', String(options.maxPoints));
   if (options.lightOnDark) args.push('--light-on-dark');
   args.push(...textOptionArgs({ regionOfInterest: options.regionOfInterest }), resolve(imagePath));
-  const raw = await run<{
-    totalContours: number;
-    topLevel: Array<Omit<Contour, 'width' | 'height'> & { w: number; h: number }>;
-  }>(args);
-  return {
-    totalContours: raw.totalContours,
-    topLevel: raw.topLevel.map((c) => ({
-      index: c.index,
-      pointCount: c.pointCount,
-      childCount: c.childCount,
-      x: c.x,
-      y: c.y,
-      width: c.w,
-      height: c.h,
-      points: c.points,
-    })),
-  };
+  return run<Contours>(args);
 }
 
 // ─── Pixel-producing operations (write PNG, return path) ─────────────────────

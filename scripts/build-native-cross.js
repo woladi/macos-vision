@@ -13,6 +13,21 @@ const TARGETS = [
 ];
 const HELPERS = ['vision-helper', 'pdf-helper', 'ui-helper'];
 
+// Symbols added in newer SDKs are absent when building against an older one, so
+// the helper gates them on -DSDK_nn. Detect what this machine's SDK provides.
+function sdkDefines() {
+  try {
+    const raw = execSync('xcrun --sdk macosx --show-sdk-version', { encoding: 'utf8' }).trim();
+    const major = parseInt(raw.split('.')[0], 10);
+    if (!Number.isFinite(major)) return [];
+    return [14, 15, 26].filter((n) => major >= n).map((n) => `-DSDK_${n}`);
+  } catch {
+    return [];
+  }
+}
+
+const DEFINES = sdkDefines().join(' ');
+
 for (const { arch, swift } of TARGETS) {
   const outDir = path.join(root, 'bin', `darwin-${arch}`);
   mkdirSync(outDir, { recursive: true });
@@ -20,7 +35,7 @@ for (const { arch, swift } of TARGETS) {
   for (const name of HELPERS) {
     const src = path.join(root, 'src', 'native', `${name}.swift`);
     const out = path.join(outDir, name);
-    execSync(`swiftc -O -target ${swift} "${src}" -o "${out}"`, { stdio: 'inherit' });
+    execSync(`swiftc -O -target ${swift} ${DEFINES} "${src}" -o "${out}"`, { stdio: 'inherit' });
   }
 
   const tarball = `bin-darwin-${arch}.tar.gz`;

@@ -19,6 +19,20 @@ const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 const binDir = path.join(root, 'bin');
 const HELPERS = ['vision-helper', 'pdf-helper', 'ui-helper'];
 
+// Symbols added in newer SDKs are absent when building against an older one, so
+// the helper gates them on -DSDK_nn. Detect what this machine's SDK provides.
+function sdkDefines() {
+  try {
+    const raw = execSync('xcrun --sdk macosx --show-sdk-version', { encoding: 'utf8' }).trim();
+    const major = parseInt(raw.split('.')[0], 10);
+    if (!Number.isFinite(major)) return [];
+    return [14, 15, 26].filter((n) => major >= n).map((n) => `-DSDK_${n}`);
+  } catch {
+    return [];
+  }
+}
+
+
 // 0. Skip if all binaries already exist (cached install)
 if (HELPERS.every((h) => existsSync(path.join(binDir, h)))) {
   process.exit(0);
@@ -85,11 +99,12 @@ function fallbackToSwiftc() {
     process.exit(1);
   }
   mkdirSync(binDir, { recursive: true });
+  const defines = sdkDefines().join(' ');
   for (const h of HELPERS) {
     const src = path.join(root, 'src', 'native', `${h}.swift`);
     const out = path.join(binDir, h);
     try {
-      execSync(`swiftc -O "${src}" -o "${out}"`, { stdio: 'inherit' });
+      execSync(`swiftc -O ${defines} "${src}" -o "${out}"`, { stdio: 'inherit' });
       console.log(`✅ macos-vision: compiled ${h} locally`);
     } catch {
       console.error(`❌ macos-vision: ${h} compilation failed.`);
