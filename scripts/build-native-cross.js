@@ -11,7 +11,7 @@ const TARGETS = [
   { arch: 'arm64', swift: 'arm64-apple-macos12' },
   { arch: 'x64', swift: 'x86_64-apple-macos12' },
 ];
-const HELPERS = ['vision-helper', 'pdf-helper'];
+const HELPERS = ['vision-helper', 'pdf-helper', 'ui-helper'];
 
 for (const { arch, swift } of TARGETS) {
   const outDir = path.join(root, 'bin', `darwin-${arch}`);

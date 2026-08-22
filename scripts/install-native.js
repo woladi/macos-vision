@@ -17,7 +17,7 @@ const root = path.resolve(__dirname, '..');
 const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 
 const binDir = path.join(root, 'bin');
-const HELPERS = ['vision-helper', 'pdf-helper'];
+const HELPERS = ['vision-helper', 'pdf-helper', 'ui-helper'];
 
 // 0. Skip if all binaries already exist (cached install)
 if (HELPERS.every((h) => existsSync(path.join(binDir, h)))) {

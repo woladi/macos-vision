@@ -17,7 +17,7 @@ Uses macOS's built-in [Vision framework](https://developer.apple.com/documentati
 npm install macos-vision
 ```
 
-The native Swift binaries (`vision-helper`, `pdf-helper`) are downloaded as prebuilt artifacts from the matching GitHub Release (signed by SHA-256). If the download fails (no network, custom registry, unpublished version), the postinstall falls back to compiling locally with `swiftc` — that's the only path that needs Xcode Command Line Tools. Set `MACOS_VISION_SKIP_DOWNLOAD=1` to force local compilation.
+The native Swift binaries (`vision-helper`, `pdf-helper`, `ui-helper`) are downloaded as prebuilt artifacts from the matching GitHub Release (signed by SHA-256). If the download fails (no network, custom registry, unpublished version), the postinstall falls back to compiling locally with `swiftc` — that's the only path that needs Xcode Command Line Tools. Set `MACOS_VISION_SKIP_DOWNLOAD=1` to force local compilation.
 
 ## What you get
 
@@ -28,6 +28,7 @@ The native Swift binaries (`vision-helper`, `pdf-helper`) are downloaded as preb
 | Image classification | Apple Vision | offline |
 | Layout inference (lines, paragraphs, reading order) | heuristic in TypeScript | offline |
 | PDF rasterization | PDFKit (`pdf-helper`) | offline |
+| Screen capture + window / display / permission introspection | `screencapture` + CoreGraphics (`ui-helper`) | offline |
 | **Image / PDF → Markdown** | Apple Vision OCR + local LLM via Ollama | local LLM call |
 
 ---
@@ -141,6 +142,31 @@ for (const block of layout) {
 | `'document'` | — |
 
 > **Note:** Layout inference is a heuristic layer. It does not understand multi-column layouts or rotated text. Treat it as structured input for downstream tools, not as ground truth.
+
+---
+
+## API — UI (screen capture, windows, permissions)
+
+Read-only introspection of the desktop plus PNG captures, meant as the "eyes" of UI-testing agents. Requires **Screen Recording** permission for the host process (System Settings → Privacy & Security → Screen Recording).
+
+```js
+import { listWindows, listDisplays, checkPermissions, captureScreen } from 'macos-vision';
+
+const perms = await checkPermissions(); // { screenRecording, accessibility }
+const displays = await listDisplays();  // bounds in screen points + backing scale
+const windows = await listWindows();    // on-screen app windows, front-to-back
+
+// Capture the frontmost Safari window (app name: exact or case-insensitive prefix)
+const shot = await captureScreen({ app: 'Safari' });
+// { path, pixelWidth, pixelHeight, frame: { x, y, w, h }, scale, capturedAt, target }
+
+// Other targets: { windowId }, { rect: { x, y, w, h } }, { displayId } (default: main display)
+const region = await captureScreen({ rect: { x: 0, y: 0, w: 800, h: 600 }, outPath: './region.png' });
+```
+
+All coordinates are **global screen points with a top-left origin** — the same space `CGEvent` clicks use — so `frame` + an OCR block's normalized bbox maps straight to a click point.
+
+**Privacy invariant:** these functions return paths, geometry, and text — never image bytes. Captures are written to disk (`$TMPDIR/macos-vision/` unless `outPath` is given) and the caller owns cleanup. The library never synthesizes input: *eyes, not hands*.
 
 ---
 

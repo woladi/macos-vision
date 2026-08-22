@@ -338,3 +338,14 @@ export { inferLayout, sortBlocksByReadingOrder } from './layout.js';
 // ─── Markdown pipeline (VisionScribe) ──────────────────────────────────────────
 export { VisionScribe, OllamaUnavailableError } from './markdown/index.js';
 export type { VisionScribeOptions, ParagraphGroup } from './markdown/index.js';
+
+// ─── UI: screen capture, windows, displays, permissions ────────────────────────
+export { listWindows, listDisplays, checkPermissions, captureScreen } from './ui.js';
+export type {
+  WindowInfo,
+  DisplayInfo,
+  PermissionsInfo,
+  ScreenFrame,
+  CaptureResult,
+  CaptureOptions,
+} from './ui.js';

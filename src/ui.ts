@@ -1,0 +1,230 @@
+// UI layer: screen capture + window/display/permission introspection.
+//
+// Privacy invariant: no function in this module ever returns image bytes.
+// Captures land on disk; only paths, geometry, and metadata flow back.
+// The library never synthesizes input — eyes, not hands.
+
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { existsSync, mkdirSync } from 'fs';
+import { open } from 'fs/promises';
+import { tmpdir } from 'os';
+import { resolve, dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+
+const execFileAsync = promisify(execFile);
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const UI_BIN_PATH = resolve(__dirname, '../bin/ui-helper');
+const UI_HELPER_TIMEOUT_MS = 15_000;
+const SCREENCAPTURE_TIMEOUT_MS = 15_000;
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+export interface WindowInfo {
+  /** CGWindowID — stable for the window's lifetime */
+  windowId: number;
+  /** Owning application name, e.g. 'Safari' */
+  app: string;
+  pid: number;
+  /** Window title (may be empty) */
+  title: string;
+  /** Global screen points, top-left origin (CGEvent click space) */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** 0 = normal app window; menu bar / dock / overlays only with `listWindows(true)` */
+  layer: number;
+  isOnScreen: boolean;
+}
+
+export interface DisplayInfo {
+  displayId: number;
+  isMain: boolean;
+  /** Global screen points, top-left origin */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Backing scale factor (2 on Retina) */
+  scale: number;
+}
+
+export interface PermissionsInfo {
+  screenRecording: boolean;
+  accessibility: boolean;
+}
+
+/** Rectangle in global screen points, top-left origin (CGEvent click space). */
+export interface ScreenFrame {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface CaptureResult {
+  /** Absolute path to the PNG on disk */
+  path: string;
+  /** Pixel dimensions of the PNG. */
+  pixelWidth: number;
+  pixelHeight: number;
+  /** Screen region the image covers, in global screen points (top-left origin). */
+  frame: ScreenFrame;
+  /** pixelWidth / frame.w — ≈2 on Retina */
+  scale: number;
+  /** ISO timestamp */
+  capturedAt: string;
+  /** Human-readable description of what was captured */
+  target: string;
+}
+
+export interface CaptureOptions {
+  windowId?: number;
+  /** App name (exact or case-insensitive prefix) — its frontmost window wins. */
+  app?: string;
+  /** Region in global screen points, top-left origin. */
+  rect?: ScreenFrame;
+  displayId?: number;
+  /** Where to write the PNG. Default: `$TMPDIR/macos-vision/capture-<ts>.png` */
+  outPath?: string;
+}
+
+// ─── ui-helper ───────────────────────────────────────────────────────────────
+
+async function runUi<T>(...args: string[]): Promise<T> {
+  const { stdout } = await execFileAsync(UI_BIN_PATH, args, { timeout: UI_HELPER_TIMEOUT_MS });
+  return JSON.parse(stdout) as T;
+}
+
+/** On-screen windows, front-to-back. Pass `true` to include menu bar, dock and overlays. */
+export function listWindows(includeAll = false): Promise<WindowInfo[]> {
+  return runUi<WindowInfo[]>('--windows', ...(includeAll ? ['--all'] : []));
+}
+
+/** Online displays (including asleep ones) with bounds and backing scale. */
+export function listDisplays(): Promise<DisplayInfo[]> {
+  return runUi<DisplayInfo[]>('--displays');
+}
+
+/** Screen Recording / Accessibility status for the current host process. */
+export function checkPermissions(): Promise<PermissionsInfo> {
+  return runUi<PermissionsInfo>('--permissions');
+}
+
+// ─── Capture ─────────────────────────────────────────────────────────────────
+
+function capturePath(outPath?: string): string {
+  if (outPath) return resolve(outPath);
+  const dir = join(tmpdir(), 'macos-vision');
+  mkdirSync(dir, { recursive: true });
+  return join(dir, `capture-${Date.now()}.png`);
+}
+
+/** Width/height straight from the PNG IHDR header — no subprocess. */
+async function pngPixelSize(path: string): Promise<{ w: number; h: number }> {
+  const fh = await open(path, 'r');
+  try {
+    const buf = Buffer.alloc(8);
+    await fh.read(buf, 0, 8, 16); // IHDR starts at byte 8; width/height at 16/20
+    return { w: buf.readUInt32BE(0), h: buf.readUInt32BE(4) };
+  } finally {
+    await fh.close();
+  }
+}
+
+async function resolveWindow(opts: CaptureOptions): Promise<WindowInfo> {
+  const windows = await listWindows();
+  if (opts.windowId != null) {
+    const win = windows.find((w) => w.windowId === opts.windowId);
+    if (!win) throw new Error(`Window ${opts.windowId} not found (use listWindows())`);
+    return win;
+  }
+  if (opts.app) {
+    const q = opts.app.toLowerCase();
+    // CGWindowList is front-to-back — first match is the frontmost window of that app.
+    // App-name matching only: title search would silently capture the wrong app.
+    const win = windows.find((w) => w.app.toLowerCase() === q || w.app.toLowerCase().startsWith(q));
+    if (!win) {
+      const apps = [...new Set(windows.map((w) => w.app))].join(', ');
+      throw new Error(`No on-screen window matches app "${opts.app}". Visible apps: ${apps}`);
+    }
+    return win;
+  }
+  throw new Error('window target requires windowId or app');
+}
+
+// Screen Recording can only change for this process via an app restart, so one
+// successful preflight is valid for the process lifetime.
+let screenRecordingOk = false;
+
+/**
+ * Captures a window (`windowId` / `app`), a region (`rect`) or a display
+ * (`displayId`, default: main) to a PNG via `/usr/sbin/screencapture`.
+ * Returns the file path and geometry — never the image bytes.
+ */
+export async function captureScreen(opts: CaptureOptions = {}): Promise<CaptureResult> {
+  if (!screenRecordingOk) {
+    const perms = await checkPermissions();
+    if (!perms.screenRecording) {
+      throw new Error(
+        'Screen Recording permission missing. Grant it to the host application ' +
+          '(Terminal / Claude Desktop / Cursor) in System Settings → Privacy & Security → Screen Recording, then restart it.'
+      );
+    }
+    screenRecordingOk = true;
+  }
+
+  const mode = opts.windowId != null || opts.app ? 'window' : opts.rect ? 'region' : 'display';
+  const out = capturePath(opts.outPath);
+  const args = ['-x', '-t', 'png'];
+  let frame: ScreenFrame;
+  let targetDesc: string;
+
+  if (mode === 'window') {
+    const win = await resolveWindow(opts);
+    args.push('-o', '-l', String(win.windowId)); // -o: no window shadow
+    frame = { x: win.x, y: win.y, w: win.w, h: win.h };
+    targetDesc = `window ${win.windowId} (${win.app}${win.title ? `: ${win.title}` : ''})`;
+  } else if (mode === 'region') {
+    const { x, y, w, h } = opts.rect!;
+    args.push(`-R${x},${y},${w},${h}`);
+    frame = { x, y, w, h };
+    targetDesc = `region ${x},${y} ${w}×${h}`;
+  } else {
+    const displays = await listDisplays();
+    const display =
+      opts.displayId != null
+        ? displays.find((d) => d.displayId === opts.displayId)
+        : (displays.find((d) => d.isMain) ?? displays[0]);
+    if (!display) throw new Error(`Display ${opts.displayId} not found`);
+    const idx = displays.indexOf(display) + 1; // screencapture -D is 1-based ordinal
+    args.push('-D', String(idx));
+    frame = { x: display.x, y: display.y, w: display.w, h: display.h };
+    targetDesc = `display ${display.displayId}`;
+  }
+
+  args.push(out);
+  try {
+    await execFileAsync('/usr/sbin/screencapture', args, { timeout: SCREENCAPTURE_TIMEOUT_MS });
+  } catch (err) {
+    const stderr = (err as { stderr?: string }).stderr?.trim();
+    throw new Error(
+      `screencapture failed for ${targetDesc}${stderr ? ` (${stderr})` : ''}. ` +
+        'Common causes: the screen is locked or asleep, or the window was closed.'
+    );
+  }
+  if (!existsSync(out)) {
+    throw new Error(`screencapture produced no file for ${targetDesc} — is the window on screen?`);
+  }
+  const px = await pngPixelSize(out);
+  return {
+    path: out,
+    pixelWidth: px.w,
+    pixelHeight: px.h,
+    frame,
+    scale: frame.w > 0 ? px.w / frame.w : 1,
+    capturedAt: new Date().toISOString(),
+    target: targetDesc,
+  };
+}
