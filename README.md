@@ -6,8 +6,8 @@ Uses macOS's built-in [Vision framework](https://developer.apple.com/documentati
 
 ## Requirements
 
-- macOS 12+ (Apple Silicon or Intel)
-- Node.js 18+
+- macOS 12+ (Apple Silicon or Intel) — some features need newer macOS (see `visionCapabilities()`)
+- Node.js 20+
 - [Ollama](https://ollama.com) running locally — only if you use the Markdown pipeline
 - Xcode Command Line Tools (`xcode-select --install`) — **only** needed as an offline fallback when prebuilt binaries cannot be downloaded
 
@@ -17,7 +17,7 @@ Uses macOS's built-in [Vision framework](https://developer.apple.com/documentati
 npm install macos-vision
 ```
 
-The native Swift binaries (`vision-helper`, `pdf-helper`) are downloaded as prebuilt artifacts from the matching GitHub Release (signed by SHA-256). If the download fails (no network, custom registry, unpublished version), the postinstall falls back to compiling locally with `swiftc` — that's the only path that needs Xcode Command Line Tools. Set `MACOS_VISION_SKIP_DOWNLOAD=1` to force local compilation.
+The native Swift binaries (`vision-helper`, `pdf-helper`, `ui-helper`) are downloaded as prebuilt artifacts from the matching GitHub Release (signed by SHA-256). If the download fails (no network, custom registry, unpublished version), the postinstall falls back to compiling locally with `swiftc` — that's the only path that needs Xcode Command Line Tools. Set `MACOS_VISION_SKIP_DOWNLOAD=1` to force local compilation.
 
 ## What you get
 
@@ -28,6 +28,12 @@ The native Swift binaries (`vision-helper`, `pdf-helper`) are downloaded as preb
 | Image classification | Apple Vision | offline |
 | Layout inference (lines, paragraphs, reading order) | heuristic in TypeScript | offline |
 | PDF rasterization | PDFKit (`pdf-helper`) | offline |
+| Screen capture + window / display / permission introspection | `screencapture` + CoreGraphics (`ui-helper`) | offline |
+| Document structure — paragraphs, tables, lists, detected data (macOS 26+) | Apple Vision `RecognizeDocumentsRequest` | offline |
+| Entities in text — links, e-mails, phones, addresses, dates | Foundation `NSDataDetector` | offline |
+| Image similarity, saliency, contours, text regions | Apple Vision | offline |
+| People — face landmarks, body / hand pose, person masks, subject cutout | Apple Vision | offline |
+| Crop / deskew / perspective-correct documents | CoreImage | offline |
 | **Image / PDF → Markdown** | Apple Vision OCR + local LLM via Ollama | local LLM call |
 
 ---
@@ -141,6 +147,117 @@ for (const block of layout) {
 | `'document'` | — |
 
 > **Note:** Layout inference is a heuristic layer. It does not understand multi-column layouts or rotated text. Treat it as structured input for downstream tools, not as ground truth.
+
+---
+
+## API — Extended Vision
+
+Everything below follows the same conventions: normalized 0–1 coordinates with a **top-left origin**, results as JSON, and pixel-producing operations **write PNG files and return paths** — never image bytes. Check `visionCapabilities()` first: features gate on the macOS version.
+
+```js
+import {
+  visionCapabilities, supportedOcrLanguages, ocr,
+  recognizeDocument, extractEntities, detectTextRegions, compareImages, imageInfo,
+  detectFaceLandmarks, detectHumans, detectBodyPose, detectHandPose, detectAnimals,
+  detectSaliency, detectContours, detectHorizon, imageAesthetics, detectLensSmudge,
+  cropImage, cropDocument, extractForeground, personMask,
+} from 'macos-vision';
+
+const caps = await visionCapabilities();
+// { helperVersion, macosVersion, ocrLanguages: ['en-US','pl-PL',…], features: { documentStructure, foregroundMask, … } }
+```
+
+A feature is reported `true` only when both this macOS **and** the SDK the helper was built against provide it. Anything reported `false` raises `UnsupportedOnThisMacOSError` rather than failing obscurely, so an agent can branch on `caps.features` before planning work.
+
+### OCR tuning
+
+`ocr()` now accepts Vision's recognition knobs. Results for `regionOfInterest` are still reported in full-image coordinates.
+
+```js
+const blocks = await ocr('invoice.png', {
+  format: 'blocks',
+  languages: ['pl-PL', 'en-US'],   // priority order; see supportedOcrLanguages()
+  languageCorrection: false,       // keep IBANs, IDs and hashes verbatim
+  customWords: ['Prorok', 'FV/2026/08'],
+  regionOfInterest: { x: 0, y: 0, width: 1, height: 0.25 },
+  fast: false,                     // true → quicker, less accurate
+  cache: true,                     // ~/.cache/macos-vision/ocr, keyed by file sha256 + options
+});
+await ocr('long.pdf', { onProgress: (done, total) => console.log(`${done}/${total}`) });
+```
+
+### Document structure (macOS 26+)
+
+Native layout understanding — no heuristics, no LLM. Throws `UnsupportedOnThisMacOSError` on older systems.
+
+```js
+const doc = await recognizeDocument('invoice.png', { languages: ['pl-PL'] });
+doc.title?.text;                 // 'Faktura VAT'
+doc.paragraphs[0].lines;         // [{ text, confidence, bbox }]
+doc.tables[0].rows;              // string[][] — cell texts by row
+doc.tables[0].cells;             // [{ text, row, col, rowSpan, colSpan, bbox }]
+doc.lists[0].items;              // [{ marker, text, bbox }]
+doc.detectedData;                // [{ type: 'money' | 'date' | 'email' | 'phone' | 'link' | …, text, value, bbox }]
+```
+
+### Text utilities
+
+```js
+await extractEntities(text);                 // links / e-mails / phones / addresses / dates with offsets — any macOS
+await detectTextRegions('shot.png');         // where text is, without reading it (fast ROI picker)
+await compareImages('before.png', 'after.png'); // { distance } — 0 identical, > ~0.8 different content
+await imageInfo('photo.jpg');                // { width, height, dpi, format, orientation, … }
+```
+
+### People, scenes, quality
+
+```js
+await detectFaceLandmarks('photo.jpg'); // bbox + roll/yaw/pitch + captureQuality + landmark polylines
+await detectHumans('photo.jpg');        // full-body boxes
+await detectBodyPose('photo.jpg');      // { joints: { left_wrist_joint: { x, y, confidence }, … } }
+await detectHandPose('photo.jpg');      // + chirality
+await detectAnimals('photo.jpg');       // cats & dogs with labels
+await detectAnimalPose('photo.jpg');    // macOS 14+
+await detectSaliency('photo.jpg', { mode: 'attention' | 'objectness', heatmapPath: 'heat.png' });
+await detectContours('chart.png', { maxPoints: 32 });
+await detectHorizon('landscape.jpg');   // { angleDegrees } | null
+await imageAesthetics('photo.jpg');     // { overallScore, isUtility } — macOS 15+; isUtility = screenshot/receipt-like
+await detectLensSmudge('photo.jpg');    // { confidence, supported } — macOS 26+, supported:false when the model is absent
+```
+
+### Pixel operations (return paths)
+
+```js
+await cropImage('shot.png', { x: 0.5, y: 0, width: 0.5, height: 0.3 });  // zoom for a second OCR pass
+await cropDocument('receipt-photo.jpg');      // detect + perspective-correct + deskew
+await extractForeground('product.jpg', { tight: true }); // subject cutout with alpha (macOS 14+)
+await personMask('photo.jpg');                // 8-bit mask, white = person
+```
+
+---
+
+## API — UI (screen capture, windows, permissions)
+
+Read-only introspection of the desktop plus PNG captures, meant as the "eyes" of UI-testing agents. Requires **Screen Recording** permission for the host process (System Settings → Privacy & Security → Screen Recording).
+
+```js
+import { listWindows, listDisplays, checkPermissions, captureScreen } from 'macos-vision';
+
+const perms = await checkPermissions(); // { screenRecording, accessibility, screenLocked }
+const displays = await listDisplays();  // bounds in screen points + backing scale
+const windows = await listWindows();    // on-screen app windows, front-to-back
+
+// Capture the frontmost Safari window (app name: exact or case-insensitive prefix)
+const shot = await captureScreen({ app: 'Safari' });
+// { path, pixelWidth, pixelHeight, sha256, frame: { x, y, w, h }, scale, capturedAt, target }
+
+// Other targets: { windowId }, { rect: { x, y, w, h } }, { displayId } (default: main display)
+const region = await captureScreen({ rect: { x: 0, y: 0, w: 800, h: 600 }, outPath: './region.png' });
+```
+
+All coordinates are **global screen points with a top-left origin** — the same space `CGEvent` clicks use — so `frame` + an OCR block's normalized bbox maps straight to a click point.
+
+**Privacy invariant:** these functions return paths, geometry, and text — never image bytes. Captures are written to disk (`$TMPDIR/macos-vision/` unless `outPath` is given) and the caller owns cleanup. The library never synthesizes input: *eyes, not hands*.
 
 ---
 
@@ -268,6 +385,15 @@ The `VisionScribe` API, the system prompt, and the chunking strategy are unchang
 | `options.format` | `'text' \| 'blocks'` | `'text'` | Plain text or structured blocks with coordinates |
 | `options.startPage` | `number` | `1` | PDFs only — first page to OCR, 1-based. Ignored for images. |
 | `options.maxPages` | `number` | all | PDFs only — maximum number of pages to OCR. Ignored for images. |
+| `options.onProgress` | `(done, total) => void` | — | PDFs only — called after each page. |
+| `options.languages` | `string[]` | Vision default | BCP-47 codes in priority order. |
+| `options.autoDetectLanguage` | `boolean` | `false` | Let Vision pick the language per run. |
+| `options.languageCorrection` | `boolean` | `true` | Disable for codes, IDs, IBANs. |
+| `options.customWords` | `string[]` | — | Vocabulary that overrides the language model. |
+| `options.fast` | `boolean` | `false` | `.fast` recognition level. |
+| `options.regionOfInterest` | `{ x, y, width, height }` | whole image | Normalized, top-left origin; output stays in full-image space. |
+| `options.minTextHeight` | `number` | — | Ignore text shorter than this fraction of image height. |
+| `options.cache` | `boolean` | `false` | Cache by content hash + options in `~/.cache/macos-vision/ocr`. |
 
 Returns `Promise<string>` or `Promise<VisionBlock[]>`.
 
