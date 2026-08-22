@@ -243,7 +243,7 @@ Read-only introspection of the desktop plus PNG captures, meant as the "eyes" of
 ```js
 import { listWindows, listDisplays, checkPermissions, captureScreen } from 'macos-vision';
 
-const perms = await checkPermissions(); // { screenRecording, accessibility }
+const perms = await checkPermissions(); // { screenRecording, accessibility, screenLocked }
 const displays = await listDisplays();  // bounds in screen points + backing scale
 const windows = await listWindows();    // on-screen app windows, front-to-back
 

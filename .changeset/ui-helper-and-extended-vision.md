@@ -4,7 +4,7 @@
 
 feat: ui-helper (windows / displays / permissions / captureScreen) and extended Vision API
 
-- New native `ui-helper` (third prebuilt binary): `listWindows`, `listDisplays`, `checkPermissions`, `captureScreen` (returns path + geometry + sha256, never bytes).
+- New native `ui-helper` (third prebuilt binary): `listWindows`, `listDisplays`, `checkPermissions`, `captureScreen` (returns path + geometry + sha256, never bytes). `checkPermissions` also reports `screenLocked`; capture failures consult it so a locked Mac is diagnosed outright rather than guessed at.
 - OCR tuning: `languages`, `autoDetectLanguage`, `languageCorrection`, `customWords`, `fast`, `regionOfInterest`, `minTextHeight`; opt-in content-hash `cache`; `onProgress` for PDFs.
 - `recognizeDocument` (macOS 26+): native paragraphs, tables, lists, title, barcodes and detected data with positions.
 - `extractEntities` (links, e-mails, phones, addresses, dates), `detectTextRegions`, `compareImages`, `imageInfo`, `visionCapabilities`, `supportedOcrLanguages`.

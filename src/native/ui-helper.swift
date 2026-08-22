@@ -30,6 +30,15 @@ struct DisplayInfo: Codable {
 struct PermissionsInfo: Codable {
     let screenRecording: Bool
     let accessibility: Bool
+    /// True while the login session is locked. Verified behaviour in that state:
+    /// window and region capture fail outright, and a full-screen capture returns
+    /// only the lock screen — so no capture is useful until the user unlocks.
+    let screenLocked: Bool
+}
+
+func isScreenLocked() -> Bool {
+    guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+    return session["CGSSessionScreenIsLocked"] as? Bool ?? false
 }
 
 func encodeJSON<T: Encodable>(_ value: T) -> String {
@@ -45,7 +54,8 @@ let args = CommandLine.arguments
 if args.contains("--permissions") {
     let info = PermissionsInfo(
         screenRecording: CGPreflightScreenCaptureAccess(),
-        accessibility: AXIsProcessTrusted()
+        accessibility: AXIsProcessTrusted(),
+        screenLocked: isScreenLocked()
     )
     print(encodeJSON(info))
     exit(0)
@@ -78,12 +88,12 @@ if args.contains("--displays") {
 }
 
 if args.contains("--windows") {
+    let includeAll = args.contains("--all")
     let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
     guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
         print("[]")
         exit(0)
     }
-    let includeAll = args.contains("--all")
     var results: [WindowInfo] = []
     for w in list {
         guard let boundsDict = w[kCGWindowBounds as String] as? [String: Double] else { continue }

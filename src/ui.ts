@@ -45,6 +45,8 @@ export interface DisplayInfo {
 export interface PermissionsInfo {
   screenRecording: boolean;
   accessibility: boolean;
+  /** True while the login session is locked — no capture is useful until unlocked. */
+  screenLocked: boolean;
 }
 
 /** Rectangle in global screen points, top-left origin (CGEvent click space). */
@@ -186,9 +188,20 @@ export async function captureScreen(opts: CaptureOptions = {}): Promise<CaptureR
     await execHelper('/usr/sbin/screencapture', args, { timeout: SCREENCAPTURE_TIMEOUT_MS });
   } catch (err) {
     const stderr = (err as { stderr?: string }).stderr?.trim();
+    // Ask the system rather than guessing: on a locked Mac window and region
+    // capture fail outright and a full-screen capture returns only the lock
+    // screen, so retrying cannot succeed until someone unlocks.
+    const locked = await checkPermissions()
+      .then((p) => p.screenLocked)
+      .catch(() => false);
     throw new Error(
-      `screencapture failed for ${targetDesc}${stderr ? ` (${stderr})` : ''}. ` +
-        'Common causes: the screen is locked or asleep, or the window was closed.'
+      locked
+        ? `screencapture failed for ${targetDesc}: the screen is locked. ` +
+            'Window and region capture do not work on a locked Mac, and a full-screen ' +
+            'capture would only show the lock screen. Ask the user to unlock, then retry — ' +
+            'retrying while locked cannot succeed.'
+        : `screencapture failed for ${targetDesc}${stderr ? ` (${stderr})` : ''}. ` +
+            'The window may have closed, or the display may be asleep.'
     );
   }
   let bytes: Buffer;
