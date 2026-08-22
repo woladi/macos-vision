@@ -24,7 +24,6 @@ import {
   imageAesthetics,
   imageInfo,
   visionCapabilities,
-  supportedOcrLanguages,
 } from './index.js';
 import type { TextRecognitionOptions } from './index.js';
 
@@ -144,32 +143,26 @@ if (roiRaw) {
   }
   textOptions.regionOfInterest = { x, y, width, height };
 }
-const ocrBase = { ...pageRange, ...textOptions, ...(flags.has('--cache') ? { cache: true } : {}) };
+const ocrBase = { ...pageRange, ...textOptions, cache: flags.has('--cache') };
 
-const metaOnly = flags.has('--capabilities') || flags.has('--languages');
+// Commands that need no input file.
+if (flags.has('--capabilities') || flags.has('--languages')) {
+  const caps = await visionCapabilities();
+  if (flags.has('--capabilities')) console.log(JSON.stringify(caps, null, 2));
+  if (flags.has('--languages')) console.log(JSON.stringify(caps.ocrLanguages, null, 2));
+  process.exit(0);
+}
 
-if (metaOnly) {
-  (async () => {
-    if (flags.has('--capabilities'))
-      console.log(JSON.stringify(await visionCapabilities(), null, 2));
-    if (flags.has('--languages'))
-      console.log(JSON.stringify(await supportedOcrLanguages(), null, 2));
-  })().catch((err) => {
-    console.error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  });
-} else if (!fileArgs[0]) {
+if (!fileArgs[0]) {
   console.error('Error: no image or PDF path provided.\n');
   console.log(USAGE);
   process.exit(1);
 }
 
-const inputPath = fileArgs[0] ? resolve(fileArgs[0]) : '';
+const inputPath = resolve(fileArgs[0]);
 
 // ─── Markdown pipeline ─────────────────────────────────────────────────────────────
-if (metaOnly) {
-  // already handled above
-} else if (flags.has('--markdown')) {
+if (flags.has('--markdown')) {
   const toStdout = flags.has('--stdout');
   const opts: { model?: string; ollamaUrl?: string } = {};
   if (model) opts.model = model;
@@ -216,9 +209,13 @@ if (metaOnly) {
   const runRects = runAll || flags.has('--rectangles');
   const runDoc = runAll || flags.has('--document');
   const runClassify = runAll || flags.has('--classify');
+  // One OCR pass shared by --ocr and --entities.
+  let textPromise: Promise<string> | undefined;
+  const getText = () => (textPromise ??= ocr(inputPath, ocrBase) as Promise<string>);
+
   const extended: Array<[string, () => Promise<unknown>]> = [
     ['--structure', () => recognizeDocument(inputPath, textOptions)],
-    ['--entities', async () => extractEntities((await ocr(inputPath, ocrBase)) as string)],
+    ['--entities', async () => extractEntities(await getText())],
     ['--text-regions', () => detectTextRegions(inputPath, textOptions)],
     ['--humans', () => detectHumans(inputPath)],
     ['--face-landmarks', () => detectFaceLandmarks(inputPath)],
@@ -229,24 +226,24 @@ if (metaOnly) {
   const runExtended = extended.filter(([flag]) => flags.has(flag));
 
   // Default: OCR text when no feature flag is given
+  const CLASSIC_FLAGS = [
+    '--ocr',
+    '--blocks',
+    '--faces',
+    '--barcodes',
+    '--rectangles',
+    '--document',
+    '--classify',
+  ];
   const anyFeatureFlag =
-    runAll ||
-    flags.has('--ocr') ||
-    flags.has('--blocks') ||
-    flags.has('--faces') ||
-    flags.has('--barcodes') ||
-    flags.has('--rectangles') ||
-    flags.has('--document') ||
-    flags.has('--classify') ||
-    runExtended.length > 0;
+    runAll || CLASSIC_FLAGS.some((f) => flags.has(f)) || runExtended.length > 0;
 
   const useDefault = !anyFeatureFlag;
 
   (async () => {
     try {
       if (useDefault || runOcr) {
-        const text = await ocr(inputPath, ocrBase);
-        console.log(text as string);
+        console.log(await getText());
       }
 
       if (runBlocks) {

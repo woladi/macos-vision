@@ -1,27 +1,17 @@
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-import { resolve, dirname, extname, dirname as pathDirname } from 'path';
-import { fileURLToPath } from 'url';
+import { resolve, dirname, extname } from 'path';
 import { open, readFile, writeFile, mkdir } from 'fs/promises';
-import { createHash } from 'crypto';
 import { homedir } from 'os';
+import { VISION_BIN, PDF_BIN, execHelper, runHelper, fileSha256, sha256 } from './helper.js';
 import { textOptionArgs } from './vision.js';
 import type { TextRecognitionOptions } from './vision.js';
 
-const execFileAsync = promisify(execFile);
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const BIN_PATH = resolve(__dirname, '../bin/vision-helper');
-const PDF_BIN_PATH = resolve(__dirname, '../bin/pdf-helper');
 const BINARY_TIMEOUT_MS = 30_000;
 const PDF_RASTERIZE_TIMEOUT_MS = 120_000;
 const OCR_CACHE_DIR = resolve(homedir(), '.cache', 'macos-vision', 'ocr');
 
-async function run(flag: string, imagePath: string): Promise<string> {
-  const { stdout } = await execFileAsync(BIN_PATH, [flag, resolve(imagePath)], {
-    timeout: BINARY_TIMEOUT_MS,
-  });
-  return stdout;
-}
+const run = <T>(args: string[]) => runHelper<T>(VISION_BIN, args, { timeout: BINARY_TIMEOUT_MS });
+
+export { fileSha256 };
 
 // ─── PDF helpers ─────────────────────────────────────────────────────
 
@@ -62,8 +52,6 @@ export interface PdfPageRangeOptions {
   startPage?: number;
   /** Maximum number of pages to process. Default: all pages from `startPage`. Ignored for non-PDF inputs. */
   maxPages?: number;
-  /** Called after each page is OCR'd (PDF inputs only). `done` counts from 1. */
-  onProgress?: (done: number, total: number) => void;
 }
 
 function buildPdfArgs(absPath: string, options: PdfPageRangeOptions): string[] {
@@ -99,11 +87,8 @@ export async function rasterizePdf(
 ): Promise<PdfRasterizeResult> {
   const absPath = resolve(pdfPath);
   const args = buildPdfArgs(absPath, options);
-  const { stdout } = await execFileAsync(PDF_BIN_PATH, args, {
-    timeout: PDF_RASTERIZE_TIMEOUT_MS,
-  });
-  const pages: PdfPage[] = JSON.parse(stdout);
-  const cacheDir = pages.length > 0 ? pathDirname(pages[0].path) : '';
+  const pages = await runHelper<PdfPage[]>(PDF_BIN, args, { timeout: PDF_RASTERIZE_TIMEOUT_MS });
+  const cacheDir = pages.length > 0 ? dirname(pages[0].path) : '';
   return { pages, cacheDir };
 }
 
@@ -114,10 +99,9 @@ export async function rasterizePdf(
 async function ocrPdf(
   pdfPath: string,
   format: 'text' | 'blocks',
-  options: OcrOptions = {}
+  options: Omit<OcrOptions, 'format'> = {}
 ): Promise<string | VisionBlock[]> {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { startPage, maxPages, onProgress, format: _format, ...textOptions } = options;
+  const { startPage, maxPages, onProgress, ...textOptions } = options;
   const { pages } = await rasterizePdf(pdfPath, { startPage, maxPages });
   if (format === 'blocks') {
     const all: VisionBlock[] = [];
@@ -138,25 +122,13 @@ async function ocrPdf(
 
 // ─── OCR result cache ────────────────────────────────────────────────────────
 
-/** SHA-256 of a file's bytes, hex. */
-export async function fileSha256(filePath: string): Promise<string> {
-  return createHash('sha256')
-    .update(await readFile(filePath))
-    .digest('hex');
-}
-
+/** Content hash + the canonical helper argv, so option order does not matter. */
 async function cacheKey(
   absPath: string,
   format: string,
   opts: TextRecognitionOptions
 ): Promise<string> {
-  const content = await fileSha256(absPath);
-  const optsKey = JSON.stringify({
-    format,
-    ...opts,
-    regionOfInterest: opts.regionOfInterest ?? null,
-  });
-  return createHash('sha256').update(content).update(optsKey).digest('hex');
+  return sha256((await fileSha256(absPath)) + JSON.stringify([format, ...textOptionArgs(opts)]));
 }
 
 async function readCache<T>(key: string): Promise<T | undefined> {
@@ -198,6 +170,8 @@ export interface VisionBlock {
 export interface OcrOptions extends PdfPageRangeOptions, TextRecognitionOptions {
   /** Return plain text (default) or structured blocks with coordinates */
   format?: 'text' | 'blocks';
+  /** Called after each page is OCR'd (PDF inputs only). `done` counts from 1. */
+  onProgress?: (done: number, total: number) => void;
   /**
    * Cache results in `~/.cache/macos-vision/ocr/` keyed by file content hash + options.
    * Repeated OCR of the same bytes (e.g. an agent re-reading a screenshot) returns instantly.
@@ -241,18 +215,9 @@ export async function ocr(
   const textArgs = textOptionArgs(textOptions);
 
   if (format === 'blocks') {
-    const { stdout } = await execFileAsync(BIN_PATH, ['--json', ...textArgs, absPath], {
-      timeout: BINARY_TIMEOUT_MS,
-      maxBuffer: 64 * 1024 * 1024,
-    });
-    const raw: Array<{
-      t: string;
-      x: number;
-      y: number;
-      w: number;
-      h: number;
-      confidence: number;
-    }> = JSON.parse(stdout);
+    const raw = await run<
+      Array<{ t: string; x: number; y: number; w: number; h: number; confidence: number }>
+    >(['--json', ...textArgs, absPath]);
     const blocks = raw.map((b) => ({
       text: b.t,
       x: b.x,
@@ -265,11 +230,9 @@ export async function ocr(
     return blocks;
   }
 
-  const { stdout } = await execFileAsync(BIN_PATH, [...textArgs, absPath], {
-    timeout: BINARY_TIMEOUT_MS,
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  const text = stdout.trim();
+  const text = (
+    await execHelper(VISION_BIN, [...textArgs, absPath], { timeout: BINARY_TIMEOUT_MS })
+  ).trim();
   if (key) await writeCache(key, text);
   return text;
 }
@@ -289,11 +252,8 @@ export interface Face {
   confidence: number;
 }
 
-export async function detectFaces(imagePath: string): Promise<Face[]> {
-  const raw: Array<{ x: number; y: number; w: number; h: number; confidence: number }> = JSON.parse(
-    await run('--faces', imagePath)
-  );
-  return raw.map((f) => ({ x: f.x, y: f.y, width: f.w, height: f.h, confidence: f.confidence }));
+export function detectFaces(imagePath: string): Promise<Face[]> {
+  return run<Face[]>(['--faces', resolve(imagePath)]);
 }
 
 // ─── Barcode / QR detection ──────────────────────────────────────────────────
@@ -315,25 +275,8 @@ export interface Barcode {
   confidence: number;
 }
 
-export async function detectBarcodes(imagePath: string): Promise<Barcode[]> {
-  const raw: Array<{
-    type: string;
-    value: string;
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-    confidence: number;
-  }> = JSON.parse(await run('--barcodes', imagePath));
-  return raw.map((b) => ({
-    type: b.type,
-    value: b.value,
-    x: b.x,
-    y: b.y,
-    width: b.w,
-    height: b.h,
-    confidence: b.confidence,
-  }));
+export function detectBarcodes(imagePath: string): Promise<Barcode[]> {
+  return run<Barcode[]>(['--barcodes', resolve(imagePath)]);
 }
 
 // ─── Rectangle detection ───────────────────────────────────────────────────
@@ -351,15 +294,8 @@ export interface Rectangle {
   confidence: number;
 }
 
-export async function detectRectangles(imagePath: string): Promise<Rectangle[]> {
-  const raw: Array<{
-    topLeft: [number, number];
-    topRight: [number, number];
-    bottomLeft: [number, number];
-    bottomRight: [number, number];
-    confidence: number;
-  }> = JSON.parse(await run('--rectangles', imagePath));
-  return raw;
+export function detectRectangles(imagePath: string): Promise<Rectangle[]> {
+  return run<Rectangle[]>(['--rectangles', resolve(imagePath)]);
 }
 
 // ─── Document detection ──────────────────────────────────────────────────────
@@ -379,8 +315,8 @@ export interface DocumentBounds {
 
 /** Returns the detected document boundary, or null if no document found. */
 export async function detectDocument(imagePath: string): Promise<DocumentBounds | null> {
-  const raw: DocumentBounds[] = JSON.parse(await run('--document', imagePath));
-  return raw.length > 0 ? raw[0] : null;
+  const raw = await run<DocumentBounds[]>(['--document', resolve(imagePath)]);
+  return raw[0] ?? null;
 }
 
 // ─── Image classification ─────────────────────────────────────────────────────
@@ -393,9 +329,8 @@ export interface Classification {
 }
 
 /** Returns top image classifications sorted by confidence (highest first). */
-export async function classify(imagePath: string): Promise<Classification[]> {
-  const raw: Classification[] = JSON.parse(await run('--classify', imagePath));
-  return raw;
+export function classify(imagePath: string): Promise<Classification[]> {
+  return run<Classification[]>(['--classify', resolve(imagePath)]);
 }
 
 // ─── Layout inference ────────────────────────────────────────────────────────────
@@ -456,6 +391,7 @@ export {
 } from './vision.js';
 export type {
   NormalizedRect,
+  Detection,
   TextRecognitionOptions,
   VisionCapabilities,
   ImageInfo,
@@ -465,7 +401,6 @@ export type {
   DocumentStructure,
   DocText,
   DocLine,
-  DocBox,
   DocTable,
   DocCell,
   DocList,

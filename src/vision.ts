@@ -4,15 +4,16 @@
 // Functions that produce pixels (masks, crops, heatmaps) write PNG files and
 // return paths — never image bytes.
 
-import { execFile } from 'child_process';
-import { resolve, dirname, join } from 'path';
-import { fileURLToPath } from 'url';
-import { mkdirSync } from 'fs';
-import { tmpdir } from 'os';
+import { resolve } from 'path';
+import {
+  VISION_BIN,
+  runHelper,
+  runGated,
+  tmpOutPath,
+  UnsupportedOnThisMacOSError,
+} from './helper.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const BIN_PATH = resolve(__dirname, '../bin/vision-helper');
-const TIMEOUT_MS = 60_000;
+export { UnsupportedOnThisMacOSError };
 
 // ─── Shared types ────────────────────────────────────────────────────────────
 
@@ -24,17 +25,8 @@ export interface NormalizedRect {
   height: number;
 }
 
-interface RawBox {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  confidence: number;
-}
-
-function box(b: RawBox): NormalizedRect & { confidence: number } {
-  return { x: b.x, y: b.y, width: b.w, height: b.h, confidence: b.confidence };
-}
+/** A detection: where it is and how sure Vision is. */
+export type Detection = NormalizedRect & { confidence: number };
 
 /** Options shared by every text-recognition path (OCR, text regions, document structure). */
 export interface TextRecognitionOptions {
@@ -54,7 +46,7 @@ export interface TextRecognitionOptions {
   minTextHeight?: number;
 }
 
-/** Serialises shared text options into helper flags. */
+/** Serialises shared text options into helper flags. Canonical — also used as the OCR cache key. */
 export function textOptionArgs(o: TextRecognitionOptions = {}): string[] {
   const args: string[] = [];
   if (o.languages?.length) args.push('--lang', o.languages.join(','));
@@ -70,33 +62,10 @@ export function textOptionArgs(o: TextRecognitionOptions = {}): string[] {
   return args;
 }
 
-async function run<T>(args: string[], input?: string): Promise<T> {
-  const stdout = await new Promise<string>((resolvePromise, reject) => {
-    const child = execFile(
-      BIN_PATH,
-      args,
-      { timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024 },
-      (err, out) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        resolvePromise(out);
-      }
-    );
-    if (input !== undefined) child.stdin?.end(input);
-  });
-  // Some Vision models log to stdout; the JSON payload is always the last line.
-  const lines = stdout.trim().split('\n');
-  return JSON.parse(lines[lines.length - 1]) as T;
-}
-
-function outPath(out: string | undefined, prefix: string): string {
-  if (out) return resolve(out);
-  const dir = join(tmpdir(), 'macos-vision');
-  mkdirSync(dir, { recursive: true });
-  return join(dir, `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e6)}.png`);
-}
+const run = <T>(args: string[], input?: string) =>
+  runHelper<T>(VISION_BIN, args, { timeout: 60_000, input });
+const gated = <T>(args: string[], feature: string, minVersion: string) =>
+  runGated<T>(VISION_BIN, args, feature, minVersion, { timeout: 60_000 });
 
 // ─── Capabilities ────────────────────────────────────────────────────────────
 
@@ -110,9 +79,15 @@ export interface VisionCapabilities {
   features: Record<string, boolean>;
 }
 
-/** What this machine can do. Cheap; cache it per process. */
+let capabilitiesPromise: Promise<VisionCapabilities> | undefined;
+
+/** What this machine can do. Constant for the process lifetime, so memoized. */
 export function visionCapabilities(): Promise<VisionCapabilities> {
-  return run<VisionCapabilities>(['--capabilities']);
+  capabilitiesPromise ??= run<VisionCapabilities>(['--capabilities']).catch((err) => {
+    capabilitiesPromise = undefined;
+    throw err;
+  });
+  return capabilitiesPromise;
 }
 
 /** BCP-47 codes supported by the accurate OCR model. */
@@ -142,15 +117,14 @@ export function imageInfo(imagePath: string): Promise<ImageInfo> {
 
 // ─── Text regions (no recognition) ───────────────────────────────────────────
 
-export type TextRegion = NormalizedRect & { confidence: number };
+export type TextRegion = Detection;
 
 /** Where text is, without reading it. Much faster than OCR — use to pick regions of interest. */
-export async function detectTextRegions(
+export function detectTextRegions(
   imagePath: string,
   options: Pick<TextRecognitionOptions, 'regionOfInterest'> = {}
 ): Promise<TextRegion[]> {
-  const raw = await run<RawBox[]>(['--text-rects', ...textOptionArgs(options), resolve(imagePath)]);
-  return raw.map(box);
+  return run<TextRegion[]>(['--text-rects', ...textOptionArgs(options), resolve(imagePath)]);
 }
 
 // ─── Image similarity ────────────────────────────────────────────────────────
@@ -190,18 +164,12 @@ export function extractEntities(text: string): Promise<TextEntity[]> {
 export interface DocLine {
   text: string;
   confidence: number;
-  bbox: DocBox;
-}
-export interface DocBox {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+  bbox: NormalizedRect;
 }
 export interface DocText {
   text: string;
   alignment?: 'leading' | 'center' | 'trailing';
-  bbox: DocBox;
+  bbox: NormalizedRect;
   lines: DocLine[];
 }
 export interface DocCell {
@@ -210,7 +178,7 @@ export interface DocCell {
   col: number;
   rowSpan: number;
   colSpan: number;
-  bbox: DocBox;
+  bbox: NormalizedRect;
 }
 export interface DocTable {
   rowCount: number;
@@ -219,16 +187,16 @@ export interface DocTable {
   rows: string[][];
   /** Unique cells with spans */
   cells: DocCell[];
-  bbox: DocBox;
+  bbox: NormalizedRect;
 }
 export interface DocListItem {
   marker: string;
   text: string;
-  bbox: DocBox;
+  bbox: NormalizedRect;
 }
 export interface DocList {
   items: DocListItem[];
-  bbox: DocBox;
+  bbox: NormalizedRect;
 }
 export interface DocDetectedData {
   type:
@@ -245,12 +213,12 @@ export interface DocDetectedData {
     | 'unknown';
   text: string;
   value?: string;
-  bbox: DocBox;
+  bbox: NormalizedRect;
 }
 export interface DocBarcode {
   type: string;
   value: string;
-  bbox: DocBox;
+  bbox: NormalizedRect;
 }
 
 export interface DocumentStructure {
@@ -266,34 +234,20 @@ export interface DocumentStructure {
   detectedData: DocDetectedData[];
 }
 
-export class UnsupportedOnThisMacOSError extends Error {
-  constructor(feature: string, minVersion: string) {
-    super(`${feature} requires macOS ${minVersion} or newer`);
-    this.name = 'UnsupportedOnThisMacOSError';
-  }
-}
-
 /**
  * Native document understanding (macOS 26+): paragraphs, tables, lists, title,
  * barcodes and detected data with positions — no heuristics, no LLM.
  * Throws `UnsupportedOnThisMacOSError` on older systems; check `visionCapabilities().features.documentStructure`.
  */
-export async function recognizeDocument(
+export function recognizeDocument(
   imagePath: string,
   options: TextRecognitionOptions = {}
 ): Promise<DocumentStructure> {
-  try {
-    return await run<DocumentStructure>([
-      '--document-structure',
-      ...textOptionArgs(options),
-      resolve(imagePath),
-    ]);
-  } catch (err) {
-    if ((err as { code?: number }).code === 2) {
-      throw new UnsupportedOnThisMacOSError('recognizeDocument', '26');
-    }
-    throw err;
-  }
+  return gated<DocumentStructure>(
+    ['--document-structure', ...textOptionArgs(options), resolve(imagePath)],
+    'recognizeDocument',
+    '26'
+  );
 }
 
 // ─── Quality signals ─────────────────────────────────────────────────────────
@@ -308,9 +262,9 @@ export interface LensSmudge {
 /** Was the photo taken through a dirty lens? macOS 26+. Returns `supported:false` instead of guessing. */
 export async function detectLensSmudge(imagePath: string): Promise<LensSmudge> {
   try {
-    return await run<LensSmudge>(['--smudge', resolve(imagePath)]);
+    return await gated<LensSmudge>(['--smudge', resolve(imagePath)], 'detectLensSmudge', '26');
   } catch (err) {
-    if ((err as { code?: number }).code === 2) return { confidence: 0, supported: false };
+    if (err instanceof UnsupportedOnThisMacOSError) return { confidence: 0, supported: false };
     throw err;
   }
 }
@@ -345,12 +299,7 @@ export function detectHorizon(imagePath: string): Promise<Horizon | null> {
 
 // ─── People, faces, poses, animals ───────────────────────────────────────────
 
-export interface FaceLandmarks {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  confidence: number;
+export interface FaceLandmarks extends Detection {
   /** Head rotation in degrees, when available */
   roll?: number;
   yaw?: number;
@@ -361,26 +310,15 @@ export interface FaceLandmarks {
   landmarks: Record<string, [number, number][]>;
 }
 
-export async function detectFaceLandmarks(imagePath: string): Promise<FaceLandmarks[]> {
-  const raw = await run<
-    Array<RawBox & Omit<FaceLandmarks, 'x' | 'y' | 'width' | 'height' | 'confidence'>>
-  >(['--face-landmarks', resolve(imagePath)]);
-  return raw.map((f) => ({
-    ...box(f),
-    roll: f.roll,
-    yaw: f.yaw,
-    pitch: f.pitch,
-    captureQuality: f.captureQuality,
-    landmarks: f.landmarks,
-  }));
+export function detectFaceLandmarks(imagePath: string): Promise<FaceLandmarks[]> {
+  return run<FaceLandmarks[]>(['--face-landmarks', resolve(imagePath)]);
 }
 
-export type HumanBox = NormalizedRect & { confidence: number };
+export type HumanBox = Detection;
 
 /** Full-body person boxes. */
-export async function detectHumans(imagePath: string): Promise<HumanBox[]> {
-  const raw = await run<RawBox[]>(['--humans', resolve(imagePath)]);
-  return raw.map(box);
+export function detectHumans(imagePath: string): Promise<HumanBox[]> {
+  return run<HumanBox[]>(['--humans', resolve(imagePath)]);
 }
 
 export interface Keypoint {
@@ -416,23 +354,14 @@ export async function detectAnimalPose(imagePath: string): Promise<Pose[]> {
   }
 }
 
-export interface Animal {
+export interface Animal extends Detection {
   /** e.g. [{ identifier: 'Cat', confidence: 0.98 }] */
   labels: Array<{ identifier: string; confidence: number }>;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  confidence: number;
 }
 
 /** Cats and dogs with boxes. */
-export async function detectAnimals(imagePath: string): Promise<Animal[]> {
-  const raw = await run<Array<RawBox & { labels: Animal['labels'] }>>([
-    '--animals',
-    resolve(imagePath),
-  ]);
-  return raw.map((a) => ({ ...box(a), labels: a.labels }));
+export function detectAnimals(imagePath: string): Promise<Animal[]> {
+  return run<Animal[]>(['--animals', resolve(imagePath)]);
 }
 
 // ─── Saliency, contours ──────────────────────────────────────────────────────
@@ -446,19 +375,18 @@ export interface SaliencyOptions {
 
 export interface Saliency {
   /** Up to 3 salient regions, sorted by the model */
-  regions: Array<NormalizedRect & { confidence: number }>;
+  regions: Detection[];
   heatmapPath?: string;
 }
 
-export async function detectSaliency(
+export function detectSaliency(
   imagePath: string,
   options: SaliencyOptions = {}
 ): Promise<Saliency> {
   const args = ['--saliency', options.mode ?? 'attention'];
   if (options.heatmapPath) args.push('--out', resolve(options.heatmapPath));
   args.push(resolve(imagePath));
-  const raw = await run<{ regions: RawBox[]; heatmapPath?: string }>(args);
-  return { regions: raw.regions.map(box), heatmapPath: raw.heatmapPath ?? undefined };
+  return run<Saliency>(args);
 }
 
 export interface ContourOptions {
@@ -469,14 +397,10 @@ export interface ContourOptions {
   regionOfInterest?: NormalizedRect;
 }
 
-export interface Contour {
+export interface Contour extends NormalizedRect {
   index: number;
   pointCount: number;
   childCount: number;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
   points?: [number, number][];
 }
 
@@ -531,7 +455,7 @@ export function cropImage(
     '--crop',
     `${region.x},${region.y},${region.width},${region.height}`,
     '--out',
-    outPath(out, 'crop'),
+    tmpOutPath('crop', out),
     resolve(imagePath),
   ]);
 }
@@ -541,7 +465,7 @@ export function cropDocument(imagePath: string, out?: string): Promise<CropResul
   return run<CropResult>([
     '--document-crop',
     '--out',
-    outPath(out, 'document'),
+    tmpOutPath('document', out),
     resolve(imagePath),
   ]);
 }
@@ -565,7 +489,7 @@ export async function extractForeground(
   imagePath: string,
   options: ForegroundOptions = {}
 ): Promise<MaskResult> {
-  const args = ['--foreground-mask', '--out', outPath(options.out, 'foreground')];
+  const args = ['--foreground-mask', '--out', tmpOutPath('foreground', options.out)];
   if (options.maskOnly) args.push('--mask-only');
   if (options.tight) args.push('--tight');
   args.push(resolve(imagePath));
@@ -583,7 +507,7 @@ export function personMask(imagePath: string, out?: string): Promise<MaskResult>
   return run<MaskResult>([
     '--person-mask',
     '--out',
-    outPath(out, 'person-mask'),
+    tmpOutPath('person-mask', out),
     resolve(imagePath),
   ]);
 }

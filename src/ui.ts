@@ -4,18 +4,9 @@
 // Captures land on disk; only paths, geometry, and metadata flow back.
 // The library never synthesizes input — eyes, not hands.
 
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-import { existsSync, mkdirSync } from 'fs';
-import { open, readFile } from 'fs/promises';
-import { createHash } from 'crypto';
-import { tmpdir } from 'os';
-import { resolve, dirname, join } from 'path';
-import { fileURLToPath } from 'url';
+import { readFile } from 'fs/promises';
+import { UI_BIN, runHelper, execHelper, tmpOutPath, sha256 } from './helper.js';
 
-const execFileAsync = promisify(execFile);
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const UI_BIN_PATH = resolve(__dirname, '../bin/ui-helper');
 const UI_HELPER_TIMEOUT_MS = 15_000;
 const SCREENCAPTURE_TIMEOUT_MS = 15_000;
 
@@ -95,10 +86,8 @@ export interface CaptureOptions {
 
 // ─── ui-helper ───────────────────────────────────────────────────────────────
 
-async function runUi<T>(...args: string[]): Promise<T> {
-  const { stdout } = await execFileAsync(UI_BIN_PATH, args, { timeout: UI_HELPER_TIMEOUT_MS });
-  return JSON.parse(stdout) as T;
-}
+const runUi = <T>(...args: string[]) =>
+  runHelper<T>(UI_BIN, args, { timeout: UI_HELPER_TIMEOUT_MS });
 
 /** On-screen windows, front-to-back. Pass `true` to include menu bar, dock and overlays. */
 export function listWindows(includeAll = false): Promise<WindowInfo[]> {
@@ -117,23 +106,9 @@ export function checkPermissions(): Promise<PermissionsInfo> {
 
 // ─── Capture ─────────────────────────────────────────────────────────────────
 
-function capturePath(outPath?: string): string {
-  if (outPath) return resolve(outPath);
-  const dir = join(tmpdir(), 'macos-vision');
-  mkdirSync(dir, { recursive: true });
-  return join(dir, `capture-${Date.now()}.png`);
-}
-
-/** Width/height straight from the PNG IHDR header — no subprocess. */
-async function pngPixelSize(path: string): Promise<{ w: number; h: number }> {
-  const fh = await open(path, 'r');
-  try {
-    const buf = Buffer.alloc(8);
-    await fh.read(buf, 0, 8, 16); // IHDR starts at byte 8; width/height at 16/20
-    return { w: buf.readUInt32BE(0), h: buf.readUInt32BE(4) };
-  } finally {
-    await fh.close();
-  }
+/** Width/height straight from the PNG IHDR header (bytes 16–23). */
+function pngPixelSize(png: Buffer): { w: number; h: number } {
+  return { w: png.readUInt32BE(16), h: png.readUInt32BE(20) };
 }
 
 async function resolveWindow(opts: CaptureOptions): Promise<WindowInfo> {
@@ -178,19 +153,18 @@ export async function captureScreen(opts: CaptureOptions = {}): Promise<CaptureR
     screenRecordingOk = true;
   }
 
-  const mode = opts.windowId != null || opts.app ? 'window' : opts.rect ? 'region' : 'display';
-  const out = capturePath(opts.outPath);
+  const out = tmpOutPath('capture', opts.outPath);
   const args = ['-x', '-t', 'png'];
   let frame: ScreenFrame;
   let targetDesc: string;
 
-  if (mode === 'window') {
+  if (opts.windowId != null || opts.app) {
     const win = await resolveWindow(opts);
     args.push('-o', '-l', String(win.windowId)); // -o: no window shadow
     frame = { x: win.x, y: win.y, w: win.w, h: win.h };
     targetDesc = `window ${win.windowId} (${win.app}${win.title ? `: ${win.title}` : ''})`;
-  } else if (mode === 'region') {
-    const { x, y, w, h } = opts.rect!;
+  } else if (opts.rect) {
+    const { x, y, w, h } = opts.rect;
     args.push(`-R${x},${y},${w},${h}`);
     frame = { x, y, w, h };
     targetDesc = `region ${x},${y} ${w}×${h}`;
@@ -209,7 +183,7 @@ export async function captureScreen(opts: CaptureOptions = {}): Promise<CaptureR
 
   args.push(out);
   try {
-    await execFileAsync('/usr/sbin/screencapture', args, { timeout: SCREENCAPTURE_TIMEOUT_MS });
+    await execHelper('/usr/sbin/screencapture', args, { timeout: SCREENCAPTURE_TIMEOUT_MS });
   } catch (err) {
     const stderr = (err as { stderr?: string }).stderr?.trim();
     throw new Error(
@@ -217,15 +191,18 @@ export async function captureScreen(opts: CaptureOptions = {}): Promise<CaptureR
         'Common causes: the screen is locked or asleep, or the window was closed.'
     );
   }
-  if (!existsSync(out)) {
+  let bytes: Buffer;
+  try {
+    bytes = await readFile(out);
+  } catch {
     throw new Error(`screencapture produced no file for ${targetDesc} — is the window on screen?`);
   }
-  const [px, bytes] = await Promise.all([pngPixelSize(out), readFile(out)]);
+  const px = pngPixelSize(bytes);
   return {
     path: out,
     pixelWidth: px.w,
     pixelHeight: px.h,
-    sha256: createHash('sha256').update(bytes).digest('hex'),
+    sha256: sha256(bytes),
     frame,
     scale: frame.w > 0 ? px.w / frame.w : 1,
     capturedAt: new Date().toISOString(),

@@ -14,15 +14,21 @@ struct OCRResult: Codable {
     let confidence: Float
 }
 
-struct FaceResult: Codable {
-    let x: Double; let y: Double; let w: Double; let h: Double
+/// Normalized box, top-left origin. Wire keys match the public TS `NormalizedRect`.
+struct Box: Codable {
+    let x: Double; let y: Double; let width: Double; let height: Double
     let confidence: Float
+    init(_ r: CGRect, _ confidence: Float) {
+        x = Double(r.origin.x); y = flipY(Double(r.origin.y), Double(r.size.height))
+        width = Double(r.size.width); height = Double(r.size.height)
+        self.confidence = confidence
+    }
 }
 
 struct BarcodeResult: Codable {
     let type: String
     let value: String
-    let x: Double; let y: Double; let w: Double; let h: Double
+    let x: Double; let y: Double; let width: Double; let height: Double
     let confidence: Float
 }
 
@@ -56,11 +62,6 @@ func encodeJSON<T: Encodable>(_ value: T) -> String {
     return str
 }
 
-struct TextRectResult: Codable {
-    let x: Double; let y: Double; let w: Double; let h: Double
-    let confidence: Float
-}
-
 struct CompareResult: Codable {
     let distance: Double
 }
@@ -87,7 +88,7 @@ struct Capabilities: Codable {
 }
 
 // Document structure (macOS 26+, RecognizeDocumentsRequest)
-struct DocRegion: Codable { let x: Double; let y: Double; let w: Double; let h: Double }
+struct DocRegion: Codable { let x: Double; let y: Double; let width: Double; let height: Double }
 struct DocLine: Codable { let text: String; let confidence: Float; let bbox: DocRegion }
 struct DocText: Codable {
     let text: String
@@ -123,28 +124,27 @@ struct DocStructure: Codable {
 
 struct PointResult: Codable { let x: Double; let y: Double; let confidence: Float }
 struct FaceLandmarksResult: Codable {
-    let x: Double; let y: Double; let w: Double; let h: Double
+    let x: Double; let y: Double; let width: Double; let height: Double
     let confidence: Float
     let roll: Double?; let yaw: Double?; let pitch: Double?
     let captureQuality: Float?
     let landmarks: [String: [[Double]]]
 }
-struct HumanResult: Codable { let x: Double; let y: Double; let w: Double; let h: Double; let confidence: Float }
 struct PoseResult: Codable { let joints: [String: PointResult]; let confidence: Float; let chirality: String? }
 struct AnimalResult: Codable {
     let labels: [ClassificationResult]
-    let x: Double; let y: Double; let w: Double; let h: Double
+    let x: Double; let y: Double; let width: Double; let height: Double
     let confidence: Float
 }
 struct HorizonResult: Codable { let angleDegrees: Double }
 struct ContourResult: Codable {
     let index: Int; let pointCount: Int; let childCount: Int
-    let x: Double; let y: Double; let w: Double; let h: Double
+    let x: Double; let y: Double; let width: Double; let height: Double
     let points: [[Double]]?
 }
 struct ContoursResult: Codable { let totalContours: Int; let topLevel: [ContourResult] }
 struct SaliencyResult: Codable {
-    let regions: [HumanResult]
+    let regions: [Box]
     let heatmapPath: String?
 }
 struct MaskResult: Codable { let instances: Int; let outPath: String }
@@ -158,19 +158,46 @@ struct ImageInfoResult: Codable {
 
 let HELPER_VERSION = "2"
 
+// VisionCore logs model-loading noise straight to fd 1 in some modes. Point fd 1 at
+// stderr for the whole process and write our JSON to the original stdout instead,
+// so callers always get exactly one clean payload.
+let resultOut: FileHandle = {
+    let saved = dup(STDOUT_FILENO)
+    dup2(STDERR_FILENO, STDOUT_FILENO)
+    return FileHandle(fileDescriptor: saved, closeOnDealloc: false)
+}()
+
+func emit(_ text: String) {
+    resultOut.write((text + "\n").data(using: .utf8)!)
+}
+
 func macOSVersionString() -> String {
     let v = ProcessInfo.processInfo.operatingSystemVersion
     return "\(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
 }
 
-func hasAestheticsAPI() -> Bool {
-    if #available(macOS 15.0, *) { return true }
-    return false
+let macOS15 = ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0))
+let macOS26 = ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0))
+let iso8601 = ISO8601DateFormatter()
+
+func supportedLanguages() -> [String] {
+    let req = VNRecognizeTextRequest()
+    req.recognitionLevel = .accurate
+    return (try? req.supportedRecognitionLanguages()) ?? []
 }
 
-func hasDocumentAPI() -> Bool {
-    if #available(macOS 26.0, *) { return true }
-    return false
+/// Run Vision requests against the shared handler; any failure is fatal for a CLI.
+func perform(_ requests: [VNRequest], _ what: String) {
+    do {
+        try handler.perform(requests)
+    } catch {
+        fail("Vision \(what) failed: \(error.localizedDescription)")
+    }
+}
+
+func fail(_ message: String, code: Int32 = 1) -> Never {
+    fputs("ERROR: \(message)\n", stderr)
+    exit(code)
 }
 
 // ─── Argument parsing ─────────────────────────────────────────────────────────
@@ -222,33 +249,27 @@ let fileArgs = args.enumerated()
 // ─── Modes that need no image ───────────────────────────────────────────────
 
 if args.contains("--languages") {
-    let req = VNRecognizeTextRequest()
-    req.recognitionLevel = .accurate
-    let langs = (try? req.supportedRecognitionLanguages()) ?? []
-    print(encodeJSON(langs))
+    emit(encodeJSON(supportedLanguages()))
     exit(0)
 }
 
 if args.contains("--capabilities") {
-    let req = VNRecognizeTextRequest()
-    req.recognitionLevel = .accurate
-    let langs = (try? req.supportedRecognitionLanguages()) ?? []
     let caps = Capabilities(
         helperVersion: HELPER_VERSION,
         macosVersion: macOSVersionString(),
-        ocrLanguages: langs,
+        ocrLanguages: supportedLanguages(),
         features: [
             "ocr": true, "ocrOptions": true, "faces": true, "barcodes": true,
             "rectangles": true, "document": true, "classify": true,
             "textRects": true, "compare": true, "entities": true,
-            "documentStructure": hasDocumentAPI(), "lensSmudge": hasDocumentAPI(),
+            "documentStructure": macOS26, "lensSmudge": macOS26,
             "faceLandmarks": true, "humans": true, "bodyPose": true, "handPose": true,
             "animals": true, "animalPose": true, "horizon": true, "contours": true,
             "saliency": true, "foregroundMask": true, "personMask": true,
-            "aesthetics": hasAestheticsAPI(), "documentCrop": true, "crop": true, "imageInfo": true,
+            "aesthetics": macOS15, "documentCrop": true, "crop": true, "imageInfo": true,
         ]
     )
-    print(encodeJSON(caps))
+    emit(encodeJSON(caps))
     exit(0)
 }
 
@@ -258,12 +279,10 @@ if isEntities {
     let text = String(decoding: data, as: UTF8.self)
     let types: NSTextCheckingResult.CheckingType = [.link, .phoneNumber, .address, .date, .transitInformation]
     guard let detector = try? NSDataDetector(types: types.rawValue) else {
-        fputs("ERROR: NSDataDetector unavailable\n", stderr)
-        exit(1)
+        fail("NSDataDetector unavailable")
     }
     let ns = text as NSString
     var results: [EntityResult] = []
-    let iso = ISO8601DateFormatter()
     for m in detector.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length)) {
         let matched = ns.substring(with: m.range)
         var type = "unknown"
@@ -284,7 +303,7 @@ if isEntities {
                 value = c[.street].map { s in [s, c[.city], c[.zip]].compactMap { $0 }.joined(separator: ", ") }
             }
         case .date:
-            type = "date"; value = m.date.map { iso.string(from: $0) }
+            type = "date"; value = m.date.map { iso8601.string(from: $0) }
             if m.duration > 0 { comps = ["durationSeconds": String(Int(m.duration))] }
         case .transitInformation:
             type = "transit"
@@ -294,14 +313,14 @@ if isEntities {
         results.append(EntityResult(type: type, text: matched, start: m.range.location,
                                     end: m.range.location + m.range.length, value: value, components: comps))
     }
-    print(encodeJSON(results))
+    emit(encodeJSON(results))
     exit(0)
 }
 
 guard let imagePath = fileArgs.first else {
-    print("Usage: vision-helper [--json|--faces|--barcodes|--rectangles|--document|--classify|--text-rects|--document-structure|--smudge|--compare <a> <b>] <path>")
-    print("       vision-helper --languages | --capabilities | --entities < text.txt")
-    print("OCR options: --lang pl,en --auto-lang --no-correction --custom-words a,b --fast --roi x,y,w,h --min-text-height f")
+    emit("Usage: vision-helper [--json|--faces|--barcodes|--rectangles|--document|--classify|--text-rects|--document-structure|--smudge|--compare <a> <b>] <path>")
+    emit("       vision-helper --languages | --capabilities | --entities < text.txt")
+    emit("OCR options: --lang pl,en --auto-lang --no-correction --custom-words a,b --fast --roi x,y,w,h --min-text-height f")
     exit(0)
 }
 
@@ -309,14 +328,12 @@ guard let imagePath = fileArgs.first else {
 
 if isCompare {
     guard fileArgs.count >= 2 else {
-        fputs("ERROR: --compare needs two image paths\n", stderr)
-        exit(1)
+        fail("--compare needs two image paths")
     }
     func featurePrint(_ path: String) -> VNFeaturePrintObservation? {
         guard let img = NSImage(contentsOf: URL(fileURLWithPath: path)),
               let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-            fputs("ERROR: Cannot open file: \(path)\n", stderr)
-            exit(1)
+            fail("Cannot open file: \(path)")
         }
         let req = VNGenerateImageFeaturePrintRequest()
         let h = VNImageRequestHandler(cgImage: cg, options: [:])
@@ -324,22 +341,19 @@ if isCompare {
         return req.results?.first as? VNFeaturePrintObservation
     }
     guard let a = featurePrint(fileArgs[0]), let b = featurePrint(fileArgs[1]) else {
-        fputs("ERROR: Vision feature print failed\n", stderr)
-        exit(1)
+        fail("Vision feature print failed")
     }
     var distance: Float = 0
     do { try a.computeDistance(&distance, to: b) } catch {
-        fputs("ERROR: Vision feature print distance failed: \(error.localizedDescription)\n", stderr)
-        exit(1)
+        fail("Vision feature print distance failed: \(error.localizedDescription)")
     }
-    print(encodeJSON(CompareResult(distance: Double(distance))))
+    emit(encodeJSON(CompareResult(distance: Double(distance))))
     exit(0)
 }
 
 guard let image = NSImage(contentsOf: URL(fileURLWithPath: imagePath)),
       let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-    fputs("ERROR: Cannot open file: \(imagePath)\n", stderr)
-    exit(1)
+    fail("Cannot open file: \(imagePath)")
 }
 
 let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
@@ -362,8 +376,7 @@ if let roi = optValue("--roi") {
     if p.count == 4 {
         roiRect = CGRect(x: p[0], y: 1.0 - p[1] - p[3], width: p[2], height: p[3])
     } else {
-        fputs("ERROR: --roi expects x,y,w,h (normalized 0-1)\n", stderr)
-        exit(1)
+        fail("--roi expects x,y,w,h (normalized 0-1)")
     }
 }
 
@@ -408,41 +421,22 @@ if isJsonMode || (!isFaces && !isBarcodes && !isRectangles && !isDocument && !is
     if let mh = ocrMinHeight { request.minimumTextHeight = mh }
     if let r = roiRect { request.regionOfInterest = r }
 
-    do {
-        try handler.perform([request])
-    } catch {
-        fputs("ERROR: Vision OCR failed: \(error.localizedDescription)\n", stderr)
-        exit(1)
-    }
-    print(isJsonMode ? encodeJSON(ocrResults) : rawText.trimmingCharacters(in: .whitespacesAndNewlines))
+    perform([request], "OCR")
+    emit(isJsonMode ? encodeJSON(ocrResults) : rawText.trimmingCharacters(in: .whitespacesAndNewlines))
     exit(0)
 }
 
 // ─── Text rectangles (fast "where is text" without recognition) ──────────────
 
 if isTextRects {
-    var results: [TextRectResult] = []
+    var results: [Box] = []
     let request = VNDetectTextRectanglesRequest { (req, _) in
         guard let obs = req.results as? [VNTextObservation] else { return }
-        for o in obs {
-            let box = unROI(o.boundingBox)
-            results.append(TextRectResult(
-                x: Double(box.origin.x),
-                y: flipY(Double(box.origin.y), Double(box.size.height)),
-                w: Double(box.size.width),
-                h: Double(box.size.height),
-                confidence: o.confidence
-            ))
-        }
+        results = obs.map { Box(unROI($0.boundingBox), $0.confidence) }
     }
     if let r = roiRect { request.regionOfInterest = r }
-    do {
-        try handler.perform([request])
-    } catch {
-        fputs("ERROR: Vision text rectangle detection failed: \(error.localizedDescription)\n", stderr)
-        exit(1)
-    }
-    print(encodeJSON(results))
+    perform([request], "text rectangle detection")
+    emit(encodeJSON(results))
     exit(0)
 }
 
@@ -452,7 +446,7 @@ if isTextRects {
 func region(_ r: NormalizedRegion) -> DocRegion {
     let b = r.boundingBox
     return DocRegion(x: Double(b.origin.x), y: flipY(Double(b.origin.y), Double(b.height)),
-                     w: Double(b.width), h: Double(b.height))
+                     width: Double(b.width), height: Double(b.height))
 }
 
 @available(macOS 26.0, *)
@@ -481,7 +475,7 @@ func docData(_ d: DocumentObservation.Container.DataDetectorMatch, in text: Stri
     case .emailAddress(let e): type = "email"; value = e.emailAddress
     case .phoneNumber(let p): type = "phone"; value = p.phoneNumber
     case .postalAddress(let a): type = "address"; value = a.fullAddress
-    case .calendarEvent(let c): type = "date"; value = c.startDate.map { ISO8601DateFormatter().string(from: $0) }
+    case .calendarEvent(let c): type = "date"; value = c.startDate.map { iso8601.string(from: $0) }
     case .moneyAmount(let m): type = "money"; value = "\(m.amount) \(m.currency.identifier)"
     case .flightNumber(let f): type = "flight"; value = "\(f.airlineCode)\(f.flightNumber)"
     case .shipmentTrackingNumber(let s): type = "tracking"; value = s.trackingNumber
@@ -564,8 +558,7 @@ func runDocumentStructure() -> DocStructure? {
     }
     sema.wait()
     if let e = failure {
-        fputs("ERROR: Vision document recognition failed: \(e.localizedDescription)\n", stderr)
-        exit(1)
+        fail("Vision document recognition failed: \(e.localizedDescription)")
     }
     return result
 }
@@ -594,30 +587,25 @@ func runSmudge() -> SmudgeResult {
     close(savedStdout)
     let noise = (try? String(contentsOfFile: tmp, encoding: .utf8)) ?? ""
     unlink(tmp)
-    if let e = failure {
-        fputs("ERROR: Vision lens smudge detection failed: \(e.localizedDescription)\n", stderr)
-        exit(1)
-    }
+    if let e = failure { fail("Vision lens smudge detection failed: \(e.localizedDescription)") }
     let supported = !noise.contains("Unable to find")
     return SmudgeResult(confidence: conf, supported: supported)
 }
 
 if isStructure {
     if #available(macOS 26.0, *) {
-        if let s = runDocumentStructure() { print(encodeJSON(s)) }
+        if let s = runDocumentStructure() { emit(encodeJSON(s)) }
         exit(0)
     }
-    fputs("ERROR: --document-structure requires macOS 26 or newer\n", stderr)
-    exit(2)
+    fail("--document-structure requires macOS 26 or newer", code: 2)
 }
 
 if isSmudge {
     if #available(macOS 26.0, *) {
-        print(encodeJSON(runSmudge()))
+        emit(encodeJSON(runSmudge()))
         exit(0)
     }
-    fputs("ERROR: --smudge requires macOS 26 or newer\n", stderr)
-    exit(2)
+    fail("--smudge requires macOS 26 or newer", code: 2)
 }
 
 
@@ -639,14 +627,9 @@ func cgFromPixelBuffer(_ pb: CVPixelBuffer) -> CGImage? {
 
 func requireOut() -> String {
     guard let out = optValue("--out") else {
-        fputs("ERROR: this mode requires --out <path.png>\n", stderr)
-        exit(1)
+        fail("this mode requires --out <path.png>")
     }
     return out
-}
-
-func box(_ r: CGRect) -> (Double, Double, Double, Double) {
-    (Double(r.origin.x), flipY(Double(r.origin.y), Double(r.size.height)), Double(r.size.width), Double(r.size.height))
 }
 
 func jointsDict(_ points: [VNRecognizedPointKey: VNRecognizedPoint]) -> [String: PointResult] {
@@ -675,7 +658,7 @@ if isImageInfo {
         colorSpace: cgImage.colorSpace?.name as String?,
         dpi: dpi, orientation: orientation, format: format
     )
-    print(encodeJSON(info))
+    emit(encodeJSON(info))
     exit(0)
 }
 
@@ -685,16 +668,14 @@ if isCrop {
     let out = requireOut()
     let p = optValue("--crop")?.split(separator: ",").compactMap { Double($0) } ?? []
     guard p.count == 4 else {
-        fputs("ERROR: --crop expects x,y,w,h (normalized 0-1)\n", stderr)
-        exit(1)
+        fail("--crop expects x,y,w,h (normalized 0-1)")
     }
     let W = Double(cgImage.width), H = Double(cgImage.height)
     let rect = CGRect(x: p[0] * W, y: p[1] * H, width: p[2] * W, height: p[3] * H).integral
     guard let cropped = cgImage.cropping(to: rect), writePNG(cropped, to: out) else {
-        fputs("ERROR: crop failed\n", stderr)
-        exit(1)
+        fail("crop failed")
     }
-    print(encodeJSON(CropResult(outPath: out, width: cropped.width, height: cropped.height)))
+    emit(encodeJSON(CropResult(outPath: out, width: cropped.width, height: cropped.height)))
     exit(0)
 }
 
@@ -705,8 +686,7 @@ if isDocCrop {
     let request = VNDetectDocumentSegmentationRequest()
     try? handler.perform([request])
     guard let o = request.results?.first as? VNRectangleObservation else {
-        fputs("ERROR: no document detected\n", stderr)
-        exit(1)
+        fail("no document detected")
     }
     let ci = CIImage(cgImage: cgImage)
     let W = ci.extent.width, H = ci.extent.height
@@ -720,10 +700,9 @@ if isDocCrop {
     guard let outCI = filter.outputImage,
           let outCG = ciContext.createCGImage(outCI, from: outCI.extent),
           writePNG(outCG, to: out) else {
-        fputs("ERROR: perspective correction failed\n", stderr)
-        exit(1)
+        fail("perspective correction failed")
     }
-    print(encodeJSON(CropResult(outPath: out, width: outCG.width, height: outCG.height)))
+    emit(encodeJSON(CropResult(outPath: out, width: outCG.width, height: outCG.height)))
     exit(0)
 }
 
@@ -732,15 +711,12 @@ if isDocCrop {
 if isLandmarks {
     let lm = VNDetectFaceLandmarksRequest()
     let cq = VNDetectFaceCaptureQualityRequest()
-    do { try handler.perform([lm, cq]) } catch {
-        fputs("ERROR: Vision face landmarks failed: \(error.localizedDescription)\n", stderr)
-        exit(1)
-    }
+    perform([lm, cq], "face landmarks")
     let faces = (lm.results ?? [])
     let quals = (cq.results ?? [])
     var results: [FaceLandmarksResult] = []
     for (i, f) in faces.enumerated() {
-        let b = box(f.boundingBox)
+        let b = Box(f.boundingBox, f.confidence)
         var marks: [String: [[Double]]] = [:]
         if let l = f.landmarks {
             let regions: [(String, VNFaceLandmarkRegion2D?)] = [
@@ -758,14 +734,14 @@ if isLandmarks {
         }
         let q: Float? = i < quals.count ? quals[i].faceCaptureQuality : nil
         results.append(FaceLandmarksResult(
-            x: b.0, y: b.1, w: b.2, h: b.3, confidence: f.confidence,
+            x: b.x, y: b.y, width: b.width, height: b.height, confidence: f.confidence,
             roll: f.roll.map { Double(truncating: $0) * 180 / .pi },
             yaw: f.yaw.map { Double(truncating: $0) * 180 / .pi },
             pitch: f.pitch.map { Double(truncating: $0) * 180 / .pi },
             captureQuality: q, landmarks: marks
         ))
     }
-    print(encodeJSON(results))
+    emit(encodeJSON(results))
     exit(0)
 }
 
@@ -774,15 +750,9 @@ if isLandmarks {
 if isHumans {
     let request = VNDetectHumanRectanglesRequest()
     request.upperBodyOnly = false
-    do { try handler.perform([request]) } catch {
-        fputs("ERROR: Vision human detection failed: \(error.localizedDescription)\n", stderr)
-        exit(1)
-    }
-    let results = ((request.results ?? [])).map { o -> HumanResult in
-        let b = box(o.boundingBox)
-        return HumanResult(x: b.0, y: b.1, w: b.2, h: b.3, confidence: o.confidence)
-    }
-    print(encodeJSON(results))
+    perform([request], "human detection")
+    let results = (request.results ?? []).map { Box($0.boundingBox, $0.confidence) }
+    emit(encodeJSON(results))
     exit(0)
 }
 
@@ -790,66 +760,53 @@ if isHumans {
 
 if isBodyPose {
     let request = VNDetectHumanBodyPoseRequest()
-    do { try handler.perform([request]) } catch {
-        fputs("ERROR: Vision body pose failed: \(error.localizedDescription)\n", stderr)
-        exit(1)
-    }
-    let results = ((request.results ?? [])).map { o in
+    perform([request], "body pose")
+    let results = (request.results ?? []).map { o in
         PoseResult(joints: jointsDict((try? o.recognizedPoints(forGroupKey: .all)) ?? [:]), confidence: o.confidence, chirality: nil)
     }
-    print(encodeJSON(results))
+    emit(encodeJSON(results))
     exit(0)
 }
 
 if isHandPose {
     let request = VNDetectHumanHandPoseRequest()
     request.maximumHandCount = 4
-    do { try handler.perform([request]) } catch {
-        fputs("ERROR: Vision hand pose failed: \(error.localizedDescription)\n", stderr)
-        exit(1)
-    }
-    let results = ((request.results ?? [])).map { o -> PoseResult in
+    perform([request], "hand pose")
+    let results = (request.results ?? []).map { o -> PoseResult in
         let ch: String
         switch o.chirality { case .left: ch = "left"; case .right: ch = "right"; default: ch = "unknown" }
         return PoseResult(joints: jointsDict((try? o.recognizedPoints(forGroupKey: .all)) ?? [:]), confidence: o.confidence, chirality: ch)
     }
-    print(encodeJSON(results))
+    emit(encodeJSON(results))
     exit(0)
 }
 
 if isAnimalPose {
     if #available(macOS 14.0, *) {
         let request = VNDetectAnimalBodyPoseRequest()
-        do { try handler.perform([request]) } catch {
-            fputs("ERROR: Vision animal pose failed: \(error.localizedDescription)\n", stderr)
-            exit(1)
-        }
-        let results = ((request.results ?? [])).map { o in
+        perform([request], "animal pose")
+        let results = (request.results ?? []).map { o in
             PoseResult(joints: jointsDict((try? o.recognizedPoints(forGroupKey: .all)) ?? [:]), confidence: o.confidence, chirality: nil)
         }
-        print(encodeJSON(results))
+        emit(encodeJSON(results))
         exit(0)
     }
-    fputs("ERROR: --animal-pose requires macOS 14 or newer\n", stderr)
-    exit(2)
+    fail("--animal-pose requires macOS 14 or newer", code: 2)
 }
 
 // ─── Animals (cat / dog) ─────────────────────────────────────────────────────
 
 if isAnimals {
     let request = VNRecognizeAnimalsRequest()
-    do { try handler.perform([request]) } catch {
-        fputs("ERROR: Vision animal recognition failed: \(error.localizedDescription)\n", stderr)
-        exit(1)
-    }
-    let results = ((request.results ?? [])).map { o -> AnimalResult in
-        let b = box(o.boundingBox)
+    perform([request], "animal recognition")
+    let results = (request.results ?? []).map { o -> AnimalResult in
+        let b = Box(o.boundingBox, o.confidence)
         return AnimalResult(
             labels: o.labels.map { ClassificationResult(identifier: $0.identifier, confidence: $0.confidence) },
-            x: b.0, y: b.1, w: b.2, h: b.3, confidence: o.confidence
+            x: b.x, y: b.y, width: b.width, height: b.height, confidence: o.confidence
         )
     }
-    print(encodeJSON(results))
+    emit(encodeJSON(results))
     exit(0)
 }
 
@@ -857,15 +814,12 @@ if isAnimals {
 
 if isHorizon {
     let request = VNDetectHorizonRequest()
-    do { try handler.perform([request]) } catch {
-        fputs("ERROR: Vision horizon detection failed: \(error.localizedDescription)\n", stderr)
-        exit(1)
-    }
+    perform([request], "horizon detection")
     guard let o = request.results?.first as? VNHorizonObservation else {
-        print("null")
+        emit("null")
         exit(0)
     }
-    print(encodeJSON(HorizonResult(angleDegrees: Double(o.angle) * 180 / .pi)))
+    emit(encodeJSON(HorizonResult(angleDegrees: Double(o.angle) * 180 / .pi)))
     exit(0)
 }
 
@@ -875,19 +829,15 @@ if isContours {
     let request = VNDetectContoursRequest()
     request.detectsDarkOnLight = !args.contains("--light-on-dark")
     if let r = roiRect { request.regionOfInterest = r }
-    do { try handler.perform([request]) } catch {
-        fputs("ERROR: Vision contour detection failed: \(error.localizedDescription)\n", stderr)
-        exit(1)
-    }
+    perform([request], "contour detection")
     guard let o = request.results?.first as? VNContoursObservation else {
-        print(encodeJSON(ContoursResult(totalContours: 0, topLevel: [])))
+        emit(encodeJSON(ContoursResult(totalContours: 0, topLevel: [])))
         exit(0)
     }
     let maxPoints = optValue("--max-points").flatMap { Int($0) } ?? 0
     var top: [ContourResult] = []
     for (i, c) in o.topLevelContours.enumerated() {
-        let bb = unROI(c.normalizedPath.boundingBox)
-        let b = box(bb)
+        let b = Box(unROI(c.normalizedPath.boundingBox), 1)
         var pts: [[Double]]? = nil
         if maxPoints > 0 {
             let all = c.normalizedPoints
@@ -898,9 +848,9 @@ if isContours {
             }
         }
         top.append(ContourResult(index: i, pointCount: c.pointCount, childCount: c.childContourCount,
-                                 x: b.0, y: b.1, w: b.2, h: b.3, points: pts))
+                                 x: b.x, y: b.y, width: b.width, height: b.height, points: pts))
     }
-    print(encodeJSON(ContoursResult(totalContours: o.contourCount, topLevel: top)))
+    emit(encodeJSON(ContoursResult(totalContours: o.contourCount, topLevel: top)))
     exit(0)
 }
 
@@ -911,21 +861,15 @@ if isSaliency {
     let request: VNImageBasedRequest = kind == "objectness"
         ? VNGenerateObjectnessBasedSaliencyImageRequest()
         : VNGenerateAttentionBasedSaliencyImageRequest()
-    do { try handler.perform([request]) } catch {
-        fputs("ERROR: Vision saliency failed: \(error.localizedDescription)\n", stderr)
-        exit(1)
-    }
+    perform([request], "saliency")
     guard let o = request.results?.first as? VNSaliencyImageObservation else {
-        print(encodeJSON(SaliencyResult(regions: [], heatmapPath: nil)))
+        emit(encodeJSON(SaliencyResult(regions: [], heatmapPath: nil)))
         exit(0)
     }
-    let regions = (o.salientObjects ?? []).map { r -> HumanResult in
-        let b = box(r.boundingBox)
-        return HumanResult(x: b.0, y: b.1, w: b.2, h: b.3, confidence: r.confidence)
-    }
+    let regions = (o.salientObjects ?? []).map { Box($0.boundingBox, $0.confidence) }
     var heat: String? = nil
     if let out = optValue("--out"), let cg = cgFromPixelBuffer(o.pixelBuffer), writePNG(cg, to: out) { heat = out }
-    print(encodeJSON(SaliencyResult(regions: regions, heatmapPath: heat)))
+    emit(encodeJSON(SaliencyResult(regions: regions, heatmapPath: heat)))
     exit(0)
 }
 
@@ -935,12 +879,9 @@ if isForeground {
     if #available(macOS 14.0, *) {
         let out = requireOut()
         let request = VNGenerateForegroundInstanceMaskRequest()
-        do { try handler.perform([request]) } catch {
-            fputs("ERROR: Vision foreground mask failed: \(error.localizedDescription)\n", stderr)
-            exit(1)
-        }
+        perform([request], "foreground mask")
         guard let o = request.results?.first as? VNInstanceMaskObservation else {
-            print(encodeJSON(MaskResult(instances: 0, outPath: "")))
+            emit(encodeJSON(MaskResult(instances: 0, outPath: "")))
             exit(0)
         }
         let maskOnly = args.contains("--mask-only")
@@ -950,14 +891,12 @@ if isForeground {
                 : try o.generateMaskedImage(ofInstances: o.allInstances, from: handler, croppedToInstancesExtent: args.contains("--tight"))
             guard let cg = cgFromPixelBuffer(pb), writePNG(cg, to: out) else { throw NSError(domain: "vision-helper", code: 1) }
         } catch {
-            fputs("ERROR: could not write foreground image: \(error.localizedDescription)\n", stderr)
-            exit(1)
+            fail("could not write foreground image: \(error.localizedDescription)")
         }
-        print(encodeJSON(MaskResult(instances: o.allInstances.count, outPath: out)))
+        emit(encodeJSON(MaskResult(instances: o.allInstances.count, outPath: out)))
         exit(0)
     }
-    fputs("ERROR: --foreground-mask requires macOS 14 or newer\n", stderr)
-    exit(2)
+    fail("--foreground-mask requires macOS 14 or newer", code: 2)
 }
 
 if isPersonMask {
@@ -965,16 +904,12 @@ if isPersonMask {
     let request = VNGeneratePersonSegmentationRequest()
     request.qualityLevel = .accurate
     request.outputPixelFormat = kCVPixelFormatType_OneComponent8
-    do { try handler.perform([request]) } catch {
-        fputs("ERROR: Vision person segmentation failed: \(error.localizedDescription)\n", stderr)
-        exit(1)
-    }
+    perform([request], "person segmentation")
     guard let o = request.results?.first as? VNPixelBufferObservation,
           let cg = cgFromPixelBuffer(o.pixelBuffer), writePNG(cg, to: out) else {
-        fputs("ERROR: could not write person mask\n", stderr)
-        exit(1)
+        fail("could not write person mask")
     }
-    print(encodeJSON(MaskResult(instances: 1, outPath: out)))
+    emit(encodeJSON(MaskResult(instances: 1, outPath: out)))
     exit(0)
 }
 
@@ -983,45 +918,27 @@ if isPersonMask {
 if isAesthetics {
     if #available(macOS 15.0, *) {
         let request = VNCalculateImageAestheticsScoresRequest()
-        do { try handler.perform([request]) } catch {
-            fputs("ERROR: Vision aesthetics failed: \(error.localizedDescription)\n", stderr)
-            exit(1)
-        }
+        perform([request], "aesthetics")
         guard let o = request.results?.first as? VNImageAestheticsScoresObservation else {
-            print("null")
+            emit("null")
             exit(0)
         }
-        print(encodeJSON(AestheticsResult(overallScore: o.overallScore, isUtility: o.isUtility)))
+        emit(encodeJSON(AestheticsResult(overallScore: o.overallScore, isUtility: o.isUtility)))
         exit(0)
     }
-    fputs("ERROR: --aesthetics requires macOS 15 or newer\n", stderr)
-    exit(2)
+    fail("--aesthetics requires macOS 15 or newer", code: 2)
 }
 
 // ─── Faces ───────────────────────────────────────────────────────────────────
 
 if isFaces {
-    var results: [FaceResult] = []
+    var results: [Box] = []
     let request = VNDetectFaceRectanglesRequest { (req, _) in
         guard let obs = req.results as? [VNFaceObservation] else { return }
-        for o in obs {
-            let box = o.boundingBox
-            results.append(FaceResult(
-                x: Double(box.origin.x),
-                y: flipY(Double(box.origin.y), Double(box.size.height)),
-                w: Double(box.size.width),
-                h: Double(box.size.height),
-                confidence: o.confidence
-            ))
-        }
+        results = obs.map { Box($0.boundingBox, $0.confidence) }
     }
-    do {
-        try handler.perform([request])
-    } catch {
-        fputs("ERROR: Vision face detection failed: \(error.localizedDescription)\n", stderr)
-        exit(1)
-    }
-    print(encodeJSON(results))
+    perform([request], "face detection")
+    emit(encodeJSON(results))
     exit(0)
 }
 
@@ -1032,25 +949,15 @@ if isBarcodes {
     let request = VNDetectBarcodesRequest { (req, _) in
         guard let obs = req.results as? [VNBarcodeObservation] else { return }
         for o in obs {
-            let box = o.boundingBox
+            let b = Box(o.boundingBox, o.confidence)
             results.append(BarcodeResult(
-                type: o.symbology.rawValue,
-                value: o.payloadStringValue ?? "",
-                x: Double(box.origin.x),
-                y: flipY(Double(box.origin.y), Double(box.size.height)),
-                w: Double(box.size.width),
-                h: Double(box.size.height),
-                confidence: o.confidence
+                type: o.symbology.rawValue, value: o.payloadStringValue ?? "",
+                x: b.x, y: b.y, width: b.width, height: b.height, confidence: o.confidence
             ))
         }
     }
-    do {
-        try handler.perform([request])
-    } catch {
-        fputs("ERROR: Vision barcode detection failed: \(error.localizedDescription)\n", stderr)
-        exit(1)
-    }
-    print(encodeJSON(results))
+    perform([request], "barcode detection")
+    emit(encodeJSON(results))
     exit(0)
 }
 
@@ -1068,14 +975,9 @@ if isRectangles {
             ))
         }
     }
-    (request as VNDetectRectanglesRequest).maximumObservations = 0
-    do {
-        try handler.perform([request])
-    } catch {
-        fputs("ERROR: Vision rectangle detection failed: \(error.localizedDescription)\n", stderr)
-        exit(1)
-    }
-    print(encodeJSON(results))
+    request.maximumObservations = 0
+    perform([request], "rectangle detection")
+    emit(encodeJSON(results))
     exit(0)
 }
 
@@ -1093,13 +995,8 @@ if isDocument {
             ))
         }
     }
-    do {
-        try handler.perform([request])
-    } catch {
-        fputs("ERROR: Vision document detection failed: \(error.localizedDescription)\n", stderr)
-        exit(1)
-    }
-    print(encodeJSON(results))
+    perform([request], "document detection")
+    emit(encodeJSON(results))
     exit(0)
 }
 
@@ -1114,12 +1011,7 @@ if isClassify {
             results.append(ClassificationResult(identifier: o.identifier, confidence: o.confidence))
         }
     }
-    do {
-        try handler.perform([request])
-    } catch {
-        fputs("ERROR: Vision classification failed: \(error.localizedDescription)\n", stderr)
-        exit(1)
-    }
-    print(encodeJSON(results))
+    perform([request], "classification")
+    emit(encodeJSON(results))
     exit(0)
 }

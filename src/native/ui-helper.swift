@@ -83,12 +83,13 @@ if args.contains("--windows") {
         print("[]")
         exit(0)
     }
+    let includeAll = args.contains("--all")
     var results: [WindowInfo] = []
     for w in list {
         guard let boundsDict = w[kCGWindowBounds as String] as? [String: Double] else { continue }
         let layer = w[kCGWindowLayer as String] as? Int ?? 0
         // Layer 0 = normal app windows; skip menu bar, dock, overlays unless --all.
-        if layer != 0 && !args.contains("--all") { continue }
+        if layer != 0 && !includeAll { continue }
         let width = boundsDict["Width"] ?? 0
         let height = boundsDict["Height"] ?? 0
         if width < 40 || height < 40 { continue } // status items, tooltips
