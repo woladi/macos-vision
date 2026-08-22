@@ -2,7 +2,11 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { resolve, dirname, extname, dirname as pathDirname } from 'path';
 import { fileURLToPath } from 'url';
-import { open } from 'fs/promises';
+import { open, readFile, writeFile, mkdir } from 'fs/promises';
+import { createHash } from 'crypto';
+import { homedir } from 'os';
+import { textOptionArgs } from './vision.js';
+import type { TextRecognitionOptions } from './vision.js';
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -10,6 +14,7 @@ const BIN_PATH = resolve(__dirname, '../bin/vision-helper');
 const PDF_BIN_PATH = resolve(__dirname, '../bin/pdf-helper');
 const BINARY_TIMEOUT_MS = 30_000;
 const PDF_RASTERIZE_TIMEOUT_MS = 120_000;
+const OCR_CACHE_DIR = resolve(homedir(), '.cache', 'macos-vision', 'ocr');
 
 async function run(flag: string, imagePath: string): Promise<string> {
   const { stdout } = await execFileAsync(BIN_PATH, [flag, resolve(imagePath)], {
@@ -57,6 +62,8 @@ export interface PdfPageRangeOptions {
   startPage?: number;
   /** Maximum number of pages to process. Default: all pages from `startPage`. Ignored for non-PDF inputs. */
   maxPages?: number;
+  /** Called after each page is OCR'd (PDF inputs only). `done` counts from 1. */
+  onProgress?: (done: number, total: number) => void;
 }
 
 function buildPdfArgs(absPath: string, options: PdfPageRangeOptions): string[] {
@@ -107,22 +114,66 @@ export async function rasterizePdf(
 async function ocrPdf(
   pdfPath: string,
   format: 'text' | 'blocks',
-  range: PdfPageRangeOptions = {}
+  options: OcrOptions = {}
 ): Promise<string | VisionBlock[]> {
-  const { pages } = await rasterizePdf(pdfPath, range);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { startPage, maxPages, onProgress, format: _format, ...textOptions } = options;
+  const { pages } = await rasterizePdf(pdfPath, { startPage, maxPages });
   if (format === 'blocks') {
     const all: VisionBlock[] = [];
-    for (const { page, path: pagePath } of pages) {
-      const blocks = (await ocr(pagePath, { format: 'blocks' })) as VisionBlock[];
+    for (const [i, { page, path: pagePath }] of pages.entries()) {
+      const blocks = (await ocr(pagePath, { ...textOptions, format: 'blocks' })) as VisionBlock[];
       all.push(...blocks.map((b) => ({ ...b, page })));
+      onProgress?.(i + 1, pages.length);
     }
     return all;
   }
   const texts: string[] = [];
-  for (const { path: pagePath } of pages) {
-    texts.push((await ocr(pagePath)) as string);
+  for (const [i, { path: pagePath }] of pages.entries()) {
+    texts.push((await ocr(pagePath, { ...textOptions, format: 'text' })) as string);
+    onProgress?.(i + 1, pages.length);
   }
   return texts.join('\n\n--- Page Break ---\n\n');
+}
+
+// ─── OCR result cache ────────────────────────────────────────────────────────
+
+/** SHA-256 of a file's bytes, hex. */
+export async function fileSha256(filePath: string): Promise<string> {
+  return createHash('sha256')
+    .update(await readFile(filePath))
+    .digest('hex');
+}
+
+async function cacheKey(
+  absPath: string,
+  format: string,
+  opts: TextRecognitionOptions
+): Promise<string> {
+  const content = await fileSha256(absPath);
+  const optsKey = JSON.stringify({
+    format,
+    ...opts,
+    regionOfInterest: opts.regionOfInterest ?? null,
+  });
+  return createHash('sha256').update(content).update(optsKey).digest('hex');
+}
+
+async function readCache<T>(key: string): Promise<T | undefined> {
+  try {
+    return JSON.parse(await readFile(resolve(OCR_CACHE_DIR, `${key}.json`), 'utf8')) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeCache(key: string, value: unknown): Promise<void> {
+  try {
+    await mkdir(OCR_CACHE_DIR, { recursive: true });
+    await writeFile(resolve(OCR_CACHE_DIR, `${key}.json`), JSON.stringify(value));
+  } catch {
+    // cache is best-effort
+  }
 }
 
 // ─── OCR ─────────────────────────────────────────────────────────────────────
@@ -144,9 +195,15 @@ export interface VisionBlock {
   page?: number;
 }
 
-export interface OcrOptions extends PdfPageRangeOptions {
+export interface OcrOptions extends PdfPageRangeOptions, TextRecognitionOptions {
   /** Return plain text (default) or structured blocks with coordinates */
   format?: 'text' | 'blocks';
+  /**
+   * Cache results in `~/.cache/macos-vision/ocr/` keyed by file content hash + options.
+   * Repeated OCR of the same bytes (e.g. an agent re-reading a screenshot) returns instantly.
+   * Default false.
+   */
+  cache?: boolean;
 }
 
 export async function ocr(
@@ -162,17 +219,31 @@ export async function ocr(
   options: OcrOptions = {}
 ): Promise<string | VisionBlock[]> {
   const absPath = resolve(imagePath);
-  const { format = 'text', startPage, maxPages } = options;
+  const {
+    format = 'text',
+    cache = false,
+    startPage,
+    maxPages,
+    onProgress,
+    ...textOptions
+  } = options;
 
   // ── PDF fast-path: rasterize via pdf-helper, then OCR each page ──────
   if (await isPdf(absPath)) {
-    return ocrPdf(absPath, format, { startPage, maxPages });
+    return ocrPdf(absPath, format, { ...textOptions, cache, startPage, maxPages, onProgress });
   }
 
-  // ── Existing image path (unchanged) ─────────────────────────────────
+  const key = cache ? await cacheKey(absPath, format, textOptions) : undefined;
+  if (key) {
+    const hit = await readCache<string | VisionBlock[]>(key);
+    if (hit !== undefined) return hit;
+  }
+  const textArgs = textOptionArgs(textOptions);
+
   if (format === 'blocks') {
-    const { stdout } = await execFileAsync(BIN_PATH, ['--json', absPath], {
+    const { stdout } = await execFileAsync(BIN_PATH, ['--json', ...textArgs, absPath], {
       timeout: BINARY_TIMEOUT_MS,
+      maxBuffer: 64 * 1024 * 1024,
     });
     const raw: Array<{
       t: string;
@@ -182,7 +253,7 @@ export async function ocr(
       h: number;
       confidence: number;
     }> = JSON.parse(stdout);
-    return raw.map((b) => ({
+    const blocks = raw.map((b) => ({
       text: b.t,
       x: b.x,
       y: b.y,
@@ -190,10 +261,17 @@ export async function ocr(
       height: b.h,
       confidence: b.confidence,
     }));
+    if (key) await writeCache(key, blocks);
+    return blocks;
   }
 
-  const { stdout } = await execFileAsync(BIN_PATH, [absPath], { timeout: BINARY_TIMEOUT_MS });
-  return stdout.trim();
+  const { stdout } = await execFileAsync(BIN_PATH, [...textArgs, absPath], {
+    timeout: BINARY_TIMEOUT_MS,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  const text = stdout.trim();
+  if (key) await writeCache(key, text);
+  return text;
 }
 
 // ─── Face detection ──────────────────────────────────────────────────────
@@ -349,3 +427,65 @@ export type {
   CaptureResult,
   CaptureOptions,
 } from './ui.js';
+
+// ─── Extended Vision API ───────────────────────────────────────────────────────
+export {
+  visionCapabilities,
+  supportedOcrLanguages,
+  imageInfo,
+  detectTextRegions,
+  compareImages,
+  extractEntities,
+  recognizeDocument,
+  detectLensSmudge,
+  imageAesthetics,
+  detectHorizon,
+  detectFaceLandmarks,
+  detectHumans,
+  detectBodyPose,
+  detectHandPose,
+  detectAnimalPose,
+  detectAnimals,
+  detectSaliency,
+  detectContours,
+  cropImage,
+  cropDocument,
+  extractForeground,
+  personMask,
+  UnsupportedOnThisMacOSError,
+} from './vision.js';
+export type {
+  NormalizedRect,
+  TextRecognitionOptions,
+  VisionCapabilities,
+  ImageInfo,
+  TextRegion,
+  ImageComparison,
+  TextEntity,
+  DocumentStructure,
+  DocText,
+  DocLine,
+  DocBox,
+  DocTable,
+  DocCell,
+  DocList,
+  DocListItem,
+  DocDetectedData,
+  DocBarcode,
+  LensSmudge,
+  AestheticsScore,
+  Horizon,
+  FaceLandmarks,
+  HumanBox,
+  Keypoint,
+  Pose,
+  Animal,
+  SaliencyOptions,
+  Saliency,
+  ContourOptions,
+  Contour,
+  Contours,
+  CropResult,
+  MaskResult,
+  ForegroundOptions,
+} from './vision.js';

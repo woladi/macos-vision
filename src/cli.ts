@@ -15,7 +15,18 @@ import {
   DocumentBounds,
   classify,
   Classification,
+  recognizeDocument,
+  extractEntities,
+  detectTextRegions,
+  detectHumans,
+  detectFaceLandmarks,
+  detectSaliency,
+  imageAesthetics,
+  imageInfo,
+  visionCapabilities,
+  supportedOcrLanguages,
 } from './index.js';
+import type { TextRecognitionOptions } from './index.js';
 
 const USAGE = `
 Usage: macos-vision [options] <image-or-pdf>
@@ -29,6 +40,27 @@ Vision options:
   --document             Document boundary detection
   --classify             Image classification
   --all                  Run all of the above
+
+OCR tuning:
+  --lang <codes>         Recognition languages, comma-separated BCP-47 (e.g. pl-PL,en-US)
+  --auto-lang            Let Vision detect the language automatically
+  --no-correction        Disable language-model correction (IDs, codes, IBANs)
+  --custom-words <w,w>   Domain vocabulary that should win over the language model
+  --fast                 Fast recognition level (quicker, less accurate)
+  --roi x,y,w,h          Only read inside this normalized region (top-left origin)
+  --cache                Cache OCR results by file hash in ~/.cache/macos-vision/ocr
+
+Extended analysis:
+  --structure            Document structure: paragraphs, tables, lists, data (macOS 26+)
+  --entities             Links / e-mails / phones / addresses / dates found in OCR text
+  --text-regions         Where text is, without reading it
+  --humans               Person bounding boxes
+  --face-landmarks       Face landmarks, head pose, capture quality
+  --saliency             Attention-based salient regions
+  --aesthetics           Aesthetics score + utility flag (macOS 15+)
+  --info                 Pixel dimensions and image metadata
+  --capabilities         What this machine supports (no input file needed)
+  --languages            Supported OCR languages (no input file needed)
 
 PDF page range (PDFs only; ignored for images):
   --start-page <N>       First page to process, 1-based (default: 1)
@@ -75,6 +107,9 @@ const ollamaUrl = takeOpt('--ollama-url', argv);
 const outPath = takeOpt('-o', argv) ?? takeOpt('--output', argv);
 const startPageRaw = takeOpt('--start-page', argv);
 const maxPagesRaw = takeOpt('--max-pages', argv);
+const langRaw = takeOpt('--lang', argv);
+const customWordsRaw = takeOpt('--custom-words', argv);
+const roiRaw = takeOpt('--roi', argv);
 
 function parsePageOpt(name: string, raw: string | undefined): number | undefined {
   if (raw === undefined) return undefined;
@@ -95,16 +130,46 @@ if (maxPages !== undefined) pageRange.maxPages = maxPages;
 const flags = new Set(argv.filter((a) => a.startsWith('--')));
 const fileArgs = argv.filter((a) => !a.startsWith('-'));
 
-if (!fileArgs[0]) {
+const textOptions: TextRecognitionOptions = {};
+if (langRaw) textOptions.languages = langRaw.split(',');
+if (customWordsRaw) textOptions.customWords = customWordsRaw.split(',');
+if (flags.has('--auto-lang')) textOptions.autoDetectLanguage = true;
+if (flags.has('--no-correction')) textOptions.languageCorrection = false;
+if (flags.has('--fast')) textOptions.fast = true;
+if (roiRaw) {
+  const [x, y, width, height] = roiRaw.split(',').map(Number);
+  if ([x, y, width, height].some((n) => !Number.isFinite(n))) {
+    console.error(`Error: --roi expects x,y,w,h (got "${roiRaw}")`);
+    process.exit(1);
+  }
+  textOptions.regionOfInterest = { x, y, width, height };
+}
+const ocrBase = { ...pageRange, ...textOptions, ...(flags.has('--cache') ? { cache: true } : {}) };
+
+const metaOnly = flags.has('--capabilities') || flags.has('--languages');
+
+if (metaOnly) {
+  (async () => {
+    if (flags.has('--capabilities'))
+      console.log(JSON.stringify(await visionCapabilities(), null, 2));
+    if (flags.has('--languages'))
+      console.log(JSON.stringify(await supportedOcrLanguages(), null, 2));
+  })().catch((err) => {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  });
+} else if (!fileArgs[0]) {
   console.error('Error: no image or PDF path provided.\n');
   console.log(USAGE);
   process.exit(1);
 }
 
-const inputPath = resolve(fileArgs[0]);
+const inputPath = fileArgs[0] ? resolve(fileArgs[0]) : '';
 
 // ─── Markdown pipeline ─────────────────────────────────────────────────────────────
-if (flags.has('--markdown')) {
+if (metaOnly) {
+  // already handled above
+} else if (flags.has('--markdown')) {
   const toStdout = flags.has('--stdout');
   const opts: { model?: string; ollamaUrl?: string } = {};
   if (model) opts.model = model;
@@ -151,6 +216,17 @@ if (flags.has('--markdown')) {
   const runRects = runAll || flags.has('--rectangles');
   const runDoc = runAll || flags.has('--document');
   const runClassify = runAll || flags.has('--classify');
+  const extended: Array<[string, () => Promise<unknown>]> = [
+    ['--structure', () => recognizeDocument(inputPath, textOptions)],
+    ['--entities', async () => extractEntities((await ocr(inputPath, ocrBase)) as string)],
+    ['--text-regions', () => detectTextRegions(inputPath, textOptions)],
+    ['--humans', () => detectHumans(inputPath)],
+    ['--face-landmarks', () => detectFaceLandmarks(inputPath)],
+    ['--saliency', () => detectSaliency(inputPath)],
+    ['--aesthetics', () => imageAesthetics(inputPath)],
+    ['--info', () => imageInfo(inputPath)],
+  ];
+  const runExtended = extended.filter(([flag]) => flags.has(flag));
 
   // Default: OCR text when no feature flag is given
   const anyFeatureFlag =
@@ -161,21 +237,22 @@ if (flags.has('--markdown')) {
     flags.has('--barcodes') ||
     flags.has('--rectangles') ||
     flags.has('--document') ||
-    flags.has('--classify');
+    flags.has('--classify') ||
+    runExtended.length > 0;
 
   const useDefault = !anyFeatureFlag;
 
   (async () => {
     try {
       if (useDefault || runOcr) {
-        const text = await ocr(inputPath, pageRange);
+        const text = await ocr(inputPath, ocrBase);
         console.log(text as string);
       }
 
       if (runBlocks) {
         const blocks = (await ocr(inputPath, {
+          ...ocrBase,
           format: 'blocks',
-          ...pageRange,
         })) as VisionBlock[];
         console.log(JSON.stringify(blocks, null, 2));
       }
@@ -203,6 +280,10 @@ if (flags.has('--markdown')) {
       if (runClassify) {
         const labels = (await classify(inputPath)) as Classification[];
         console.log(JSON.stringify(labels, null, 2));
+      }
+
+      for (const [, fn] of runExtended) {
+        console.log(JSON.stringify(await fn(), null, 2));
       }
     } catch (error) {
       console.error('Error:', error);

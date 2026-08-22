@@ -8,8 +8,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
 const TARGETS = [
-  { arch: 'arm64', swift: 'arm64-apple-macos12' },
-  { arch: 'x64', swift: 'x86_64-apple-macos12' },
+  { arch: 'arm64', swift: 'arm64-apple-macos13' },
+  { arch: 'x64', swift: 'x86_64-apple-macos13' },
 ];
 const HELPERS = ['vision-helper', 'pdf-helper', 'ui-helper'];
 

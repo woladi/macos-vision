@@ -7,7 +7,8 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { existsSync, mkdirSync } from 'fs';
-import { open } from 'fs/promises';
+import { open, readFile } from 'fs/promises';
+import { createHash } from 'crypto';
 import { tmpdir } from 'os';
 import { resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -73,6 +74,8 @@ export interface CaptureResult {
   frame: ScreenFrame;
   /** pixelWidth / frame.w — ≈2 on Retina */
   scale: number;
+  /** SHA-256 of the PNG bytes — pin assertions to a specific capture, detect replaced files */
+  sha256: string;
   /** ISO timestamp */
   capturedAt: string;
   /** Human-readable description of what was captured */
@@ -217,11 +220,12 @@ export async function captureScreen(opts: CaptureOptions = {}): Promise<CaptureR
   if (!existsSync(out)) {
     throw new Error(`screencapture produced no file for ${targetDesc} — is the window on screen?`);
   }
-  const px = await pngPixelSize(out);
+  const [px, bytes] = await Promise.all([pngPixelSize(out), readFile(out)]);
   return {
     path: out,
     pixelWidth: px.w,
     pixelHeight: px.h,
+    sha256: createHash('sha256').update(bytes).digest('hex'),
     frame,
     scale: frame.w > 0 ? px.w / frame.w : 1,
     capturedAt: new Date().toISOString(),
