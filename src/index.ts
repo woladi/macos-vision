@@ -3,6 +3,11 @@ import { open, readFile, writeFile, mkdir } from 'fs/promises';
 import { homedir } from 'os';
 import { VISION_BIN, PDF_BIN, execHelper, runHelper, fileSha256, sha256 } from './helper.js';
 import { textOptionArgs, visionCapabilities } from './vision.js';
+import { axTree } from './ax.js';
+import type { AxTreeOptions } from './ax.js';
+import { captureScreen, listWindows } from './ui.js';
+import { mergeOcrWithTree } from './snapshot.js';
+import type { UiSnapshot } from './snapshot.js';
 import type { TextRecognitionOptions } from './vision.js';
 
 const BINARY_TIMEOUT_MS = 30_000;
@@ -356,6 +361,70 @@ export type {
 export { inferLayout, sortBlocksByReadingOrder } from './layout.js';
 
 // ─── Markdown pipeline (VisionScribe) ──────────────────────────────────────────
+// ─── UI snapshot: accessibility tree + what OCR can see ──────────────────────
+
+export interface UiSnapshotOptions extends Omit<AxTreeOptions, 'colors'> {
+  /** Sample colours from the capture this function takes anyway. Default true. */
+  colors?: boolean;
+  /**
+   * Run OCR and report text the tree does not account for. Default true — it is
+   * what makes the snapshot complete, and the gap is itself a finding. Costs
+   * roughly a second on a full window.
+   */
+  ocr?: boolean;
+  /** Ignore OCR text below this confidence when deciding coverage. Default 0.3. */
+  minConfidence?: number;
+}
+
+/**
+ * The layout of a running application as one object: accessibility nodes with
+ * exact boxes, optional colours and typography, plus the text Vision can see
+ * that the tree has no node for.
+ *
+ * That last part matters twice over. It completes the picture for anything
+ * custom-drawn — canvas, WebGL, games, images with baked-in labels, where AX is
+ * blind — and each entry is an accessibility gap in the app under test.
+ * `summary.axTextCoverage` is the share of visible text the tree accounts for.
+ */
+export async function uiSnapshot(options: UiSnapshotOptions = {}): Promise<UiSnapshot> {
+  const { colors = true, ocr: wantOcr = true, minConfidence, ...treeOptions } = options;
+  // The capture must cover exactly the window axTree walks, or colours and OCR
+  // would describe a different region than the geometry. Resolve the window
+  // explicitly rather than letting the two calls each pick their own.
+  const windowIndex = treeOptions.window ?? 0;
+  let captureOptions: { app?: string; windowId?: number };
+  if (treeOptions.app && windowIndex === 0) {
+    captureOptions = { app: treeOptions.app };
+  } else {
+    const q = treeOptions.app?.toLowerCase();
+    const candidates = (await listWindows()).filter((w) =>
+      q ? w.app.toLowerCase() === q || w.app.toLowerCase().startsWith(q) : w.pid === treeOptions.pid
+    );
+    const win = candidates[windowIndex];
+    if (!win) {
+      const what = treeOptions.app ?? `pid ${treeOptions.pid}`;
+      throw new Error(
+        `no on-screen window ${windowIndex} for ${what} (found ${candidates.length})`
+      );
+    }
+    captureOptions = { windowId: win.windowId };
+  }
+  const capture = await captureScreen(captureOptions);
+  const tree = await axTree({
+    ...treeOptions,
+    ...(colors ? { colors: { path: capture.path, frame: capture.frame } } : {}),
+  });
+  if (!wantOcr) {
+    const { unresolved, summary } = mergeOcrWithTree(tree, [], capture.frame, minConfidence);
+    return { ...tree, unresolved, summary };
+  }
+  const blocks = await ocr(capture.path, { format: 'blocks' });
+  const { unresolved, summary } = mergeOcrWithTree(tree, blocks, capture.frame, minConfidence);
+  return { ...tree, unresolved, summary };
+}
+
+export { mergeOcrWithTree, blockToScreenBox } from './snapshot.js';
+export type { UiSnapshot, UnresolvedText, SnapshotSummary } from './snapshot.js';
 export { axTree } from './ax.js';
 export type {
   AxTree,

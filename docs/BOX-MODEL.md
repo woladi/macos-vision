@@ -4,7 +4,7 @@ Goal: hand an LLM a compact JSON description of what is on screen — element bo
 colours, borders, typography — complete enough that the model can reconstruct the layout, review
 it, or write assertions against it, **without ever seeing the screenshot**.
 
-Status: **phases 1–3 implemented** as `axTree()` (see the README). Phase 4 — merging with OCR to populate `unresolved` — is still open. Every number below was measured on this machine
+Status: **implemented** — phases 1–3 as `axTree()`, phase 4 as `uiSnapshot()` (see the README). Every number below was measured on this machine
 (Apple M1 Pro, 16 GB, macOS 26.5.2) with throwaway probes, not estimated.
 
 ---
@@ -178,6 +178,11 @@ Built as `ax-helper` + `src/ax.ts`. Findings that only appeared once it ran:
 - **Swift omits `nil` rather than encoding `null`**, so the root node has no
   `parent` key at all. The TypeScript type said `number | null`; a consumer
   checking `=== null` would have been wrong. Caught by a test, fixed in the type.
+- **The coverage metric lied when the walk was capped.** `axTextCoverage` read
+  0.34 on a Safari window at `maxElements: 200` and 0.83 for the same window
+  walked completely — the first number measures our budget, not the app's
+  accessibility, but it reads like a verdict on the app. It is now `null`
+  whenever `budget.capped` is true.
 - **`AXAttributedStringForRange` is app-dependent.** TextEdit returns
   `Menlo-Regular` 11 pt; Safari's web `StaticText` returns alignment but no font.
   That is a limit of the source, not of the reader.
