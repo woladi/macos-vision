@@ -176,6 +176,20 @@ func text(_ v: Any?) -> String? {
     return t.isEmpty ? nil : t
 }
 
+func roleOf(_ el: AXUIElement) -> String? {
+    var v: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &v) == .success else { return nil }
+    return v as? String
+}
+
+/// AXUIElement is a CFType with no Swift Hashable conformance; CFHash plus a
+/// CFEqual check on collision is the documented way to key one.
+struct ElementKey: Hashable {
+    let element: AXUIElement
+    static func == (a: ElementKey, b: ElementKey) -> Bool { CFEqual(a.element, b.element) }
+    func hash(into hasher: inout Hasher) { hasher.combine(CFHash(element)) }
+}
+
 func children(_ el: AXUIElement) -> [AXUIElement] {
     var v: CFTypeRef?
     guard AXUIElementCopyAttributeValue(el, kAXChildrenAttribute as CFString, &v) == .success,
@@ -303,16 +317,35 @@ let started = Date()
 var windowBox: Box?
 var cullRect: CGRect?
 
-let windows = children(axApp).filter { el in
-    let a = readAttributes(el)
-    return (a[0] as? String) == "AXWindow"
-}
+/// `kAXWindows` is the documented way to enumerate an application's windows.
+/// Filtering the application element's children by role is not: those children
+/// are `AXApplication` and `AXMenuBar`, so that approach found windows only by
+/// accident and reported none for apps where it did not.
+/// Windows come from `kAXWindows` where the app provides it and from the
+/// application element's children otherwise — apps differ, and Safari has been
+/// observed answering `kAXWindows` with the application element itself. Take the
+/// union, keep only real windows, and never the app element (which would make
+/// the walk descend into the whole application).
+let windows: [AXUIElement] = {
+    var found: [AXUIElement] = []
+    var seen = Set<ElementKey>()
+    var v: CFTypeRef?
+    if AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &v) == .success,
+       let ws = v as? [AXUIElement] {
+        found += ws
+    }
+    found += children(axApp)
+    return found.filter { el in
+        guard !CFEqual(el, axApp), roleOf(el) == "AXWindow" else { return false }
+        return seen.insert(ElementKey(element: el)).inserted
+    }
+}()
 let windowIndex = intOpt("--window", 0)
 // Asking for a window that is not there must say so. Falling through to the
 // application element walks a different, larger tree and reports no window
 // frame — a silently different answer to the question that was asked.
 if windows.isEmpty {
-    fail("\(app.localizedName ?? "app") has no accessibility windows (is it minimised or hidden?)")
+    fail("\(app.localizedName ?? "app") has no accessibility windows — it may be minimised or hidden, or the screen may be locked (a locked Mac exposes none)")
 }
 if windows[safe: windowIndex] == nil {
     fail("window \(windowIndex) not found: \(app.localizedName ?? "app") exposes \(windows.count)")
@@ -334,9 +367,15 @@ if let cp = colorsPath {
     if pixels == nil { fail("cannot read image for --colors: \(cp)") }
 }
 
+var visited = Set<ElementKey>()
+
 func walk(_ el: AXUIElement, parent: Int?, depth: Int) {
     if depth > maxDepth { capped = true; return }
     if nodes.count >= maxElements { capped = true; return }
+    // The tree is a graph in practice: Safari lists the application element as
+    // its own child, and without this the walk descends into it repeatedly and
+    // returns menu bars at the depth limit instead of the window.
+    guard visited.insert(ElementKey(element: el)).inserted else { return }
 
     let a = readAttributes(el)
     guard let role = a[0] as? String else { return }
