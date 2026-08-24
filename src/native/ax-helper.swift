@@ -303,6 +303,15 @@ let windows = children(axApp).filter { el in
     return (a[0] as? String) == "AXWindow"
 }
 let windowIndex = intOpt("--window", 0)
+// Asking for a window that is not there must say so. Falling through to the
+// application element walks a different, larger tree and reports no window
+// frame — a silently different answer to the question that was asked.
+if windows.isEmpty {
+    fail("\(app.localizedName ?? "app") has no accessibility windows (is it minimised or hidden?)")
+}
+if windows[safe: windowIndex] == nil {
+    fail("window \(windowIndex) not found: \(app.localizedName ?? "app") exposes \(windows.count)")
+}
 if let win = windows[safe: windowIndex] {
     let a = readAttributes(win)
     if let p = point(a[5]), let s = size(a[6]) {

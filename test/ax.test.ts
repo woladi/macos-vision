@@ -103,3 +103,15 @@ describe('axTree()', () => {
     T
   );
 });
+
+describe('axTree() window targeting', () => {
+  it(
+    'fails loudly when the window index is out of range',
+    async () => {
+      // Falling back to the application element would walk a larger tree and
+      // report no window frame — a different answer to the question asked.
+      await expect(axTree({ app: APP, window: 99 })).rejects.toThrow(/window 99 not found/);
+    },
+    T
+  );
+});
