@@ -40,7 +40,10 @@ describe('axTree()', () => {
     async () => {
       const tree = await axTree({ app: APP, maxElements: 10 });
       expect(tree.budget.elements).toBe(tree.nodes.length);
-      expect(tree.budget.elements).toBeLessThanOrEqual(10);
+      // maxElements caps the walk, and pruning runs after it — so `walked` is
+      // what hit the cap while `elements` can legitimately be smaller.
+      expect(tree.budget.walked).toBeLessThanOrEqual(10);
+      expect(tree.budget.elements).toBeLessThanOrEqual(tree.budget.walked);
       expect(tree.budget.capped).toBe(true);
       expect(tree.budget.elapsedMs).toBeGreaterThanOrEqual(0);
     },
@@ -99,6 +102,18 @@ describe('axTree()', () => {
       await expect(axTree({ app: 'NoSuchApplication12345' })).rejects.toThrow(
         /no running application/
       );
+    },
+    T
+  );
+});
+
+describe('axTree() window targeting', () => {
+  it(
+    'fails loudly when the window index is out of range',
+    async () => {
+      // Falling back to the application element would walk a larger tree and
+      // report no window frame — a different answer to the question asked.
+      await expect(axTree({ app: APP, window: 99 })).rejects.toThrow(/window 99 not found/);
     },
     T
   );
