@@ -1,5 +1,53 @@
 # Changelog
 
+## 1.8.1
+
+### Patch Changes
+
+- 77422c3: fix: survive cycles in the accessibility tree, and enumerate windows from both sources
+
+  The AX tree is a graph, not a tree. Safari was observed listing the application
+  element as its own child and answering `kAXWindows` with it. Without cycle
+  protection the walk descends into the application repeatedly and returns menu
+  bars at the depth limit instead of the window's contents — which is what
+  produced an occasional two-node result. Visited elements are now tracked by
+  `CFHash`/`CFEqual` and never revisited.
+
+  Windows are taken from the union of `kAXWindows` and the application element's
+  children, filtered to real windows and never the application element itself,
+  because apps differ in which of the two they populate.
+
+  The `axTree` tests no longer assume a particular app has a window. They probe
+  until they find an app the accessibility API actually answers for and skip when
+  none does: `CGWindowList` still lists windows on a locked Mac while AX exposes
+  none, and a CI runner has neither — so the previous fixed target passed locally
+  and failed there.
+
+- 77422c3: fix(ci): build the Swift helpers from source instead of testing last release's binaries
+
+  `postinstall` downloads prebuilt helpers for the package's current version. Once
+  that version is published, CI on a branch that changes Swift finds those assets,
+  downloads them, and runs the whole suite against the **previous** release —
+  so native changes were never actually tested. It surfaced when two tests for
+  freshly added helper behaviour failed on CI while passing locally: the runner was
+  executing a binary that predated them.
+
+  CI now sets `MACOS_VISION_SKIP_DOWNLOAD=1` and asserts every helper exists and is
+  newer than its source, so a stale download cannot slip through unnoticed.
+
+- 34d1a2b: fix: `axTree()` window and budget reporting say what actually happened
+
+  Asking for `window: 1` on an app with one window silently fell through to the
+  application element. That walks a larger, different tree and reports no window
+  frame — a different answer to the question that was asked, easily mistaken for a
+  real result. It now fails with how many windows the app actually exposes, and
+  says so separately when an app exposes none at all (minimised or hidden).
+
+  `budget` now also reports `walked` — the number of nodes visited before pruning,
+  which is what `maxElements` caps. Without it, a result showing `elements: 315`,
+  `maxElements: 400` and `capped: true` reads as a contradiction instead of
+  "the walk hit the cap and pruning then removed 85".
+
 ## 1.8.0
 
 ### Minor Changes
