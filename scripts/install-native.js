@@ -17,7 +17,7 @@ const root = path.resolve(__dirname, '..');
 const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 
 const binDir = path.join(root, 'bin');
-const HELPERS = ['vision-helper', 'pdf-helper', 'ui-helper'];
+const HELPERS = ['vision-helper', 'pdf-helper', 'ui-helper', 'ax-helper'];
 
 // Symbols added in newer SDKs are absent when building against an older one, so
 // the helper gates them on -DSDK_nn. Detect what this machine's SDK provides.

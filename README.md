@@ -261,6 +261,86 @@ All coordinates are **global screen points with a top-left origin** — the same
 
 ---
 
+## API — Box model (accessibility tree)
+
+`axTree()` returns the on-screen layout of a running application: element boxes,
+hierarchy, roles and labels from the accessibility API, optionally with colours
+sampled from a capture and typography from the AX attributed string. Geometry is
+**measured**, not inferred from OCR bounding boxes.
+
+```ts
+import { axTree, captureScreen } from 'macos-vision';
+
+const tree = await axTree({ app: 'Safari' });
+// { app, pid, window: [x,y,w,h], source: 'ax', budget: {...}, nodes: [...] }
+
+// With colours and fonts, from a capture of the same window:
+const shot = await captureScreen({ app: 'Safari' });
+const full = await axTree({
+  app: 'Safari',
+  colors: { path: shot.path, frame: shot.frame },
+  typography: true,
+});
+```
+
+A node:
+
+```jsonc
+{
+  "id": 42, "parent": 7, "depth": 5,
+  "role": "Button", "label": "Zapisz",
+  "box": [812, 540, 96, 32],                 // [x, y, w, h] in screen points
+  "style": { "bg": "#2F6FEB", "border": "#1B4FC4", "borderWidth": 1 },
+  "text": { "font": "SFPro-Semibold", "family": "SF Pro", "size": 13, "align": "center" }
+}
+```
+
+`box` is an array rather than a keyed object because the same four numbers repeat
+on every node; keys would cost roughly four times the tokens. `enabled` appears
+only when `false` and `focused` only when `true`, for the same reason.
+
+### Cost, and how it is bounded
+
+Every attribute read is a synchronous IPC round trip into the target app, so cost
+tracks that app's accessibility implementation rather than tree size — the same
+4000 elements measured **1.6 s in Safari and 11 s in Finder**. Three things keep
+it bounded: attribute reads are batched, subtrees outside the window's visible
+rect are culled, and `maxElements` / `maxDepth` cap the walk. `budget` reports
+what happened, including `capped: true`, so a truncated tree is never mistaken
+for a complete one.
+
+`detail: 'content'` (the default) drops unlabelled structural containers and
+re-parents their children. Boxes are absolute, so the nesting adds little for a
+reader and roughly halves the payload — measured 600 → 289 nodes on a Finder
+window.
+
+> **A full tree is not a token saving over a screenshot.** A dense window runs to
+> thousands of tokens either way; measured on Finder, a pruned 289-node tree is
+> ~7.3k tokens against ~6.9k for the image. The reason to use it is what a
+> screenshot cannot give — exact boxes, roles, enabled state, hierarchy — and the
+> fact that you can take a slice (`maxElements`, one window, one subtree) instead
+> of the whole thing.
+
+### Limits, stated plainly
+
+- **This is not the CSS box model.** CSS has four nested boxes; AX has one.
+  `borderWidth` is inferred by an edge scan and there is no padding or margin.
+- **Colours come from pixels**, so an occluded element reports whatever is drawn
+  on top of it, and gradients or shadows are approximations.
+- **Typography depends on the app.** `AXAttributedStringForRange` returns real
+  font data where it is implemented (TextEdit gives `Menlo-Regular` 11 pt); web
+  content in Safari exposes alignment but no font.
+- **Requires Accessibility permission** for the host process, separately from
+  Screen Recording. Without it `axTree()` throws with that reason.
+- For web pages, Chrome DevTools `DOM.getBoxModel` and `CSS.getComputedStyleForNode`
+  return the real thing and are strictly better. This is for native apps, Electron,
+  canvas/WebGL, games and mockups.
+
+See [`docs/BOX-MODEL.md`](docs/BOX-MODEL.md) for the measurements behind these
+numbers.
+
+---
+
 ## API — Markdown pipeline (VisionScribe)
 
 `VisionScribe` converts an image or PDF to Markdown by combining Apple Vision OCR with a local LLM (via Ollama). The LLM never sees the image — it only formats text that Vision already extracted. This keeps image processing local and reduces the risk of vision-model hallucinations, but Markdown reconstruction is still best-effort and depends on the local model and document complexity.

@@ -4,7 +4,7 @@ Goal: hand an LLM a compact JSON description of what is on screen — element bo
 colours, borders, typography — complete enough that the model can reconstruct the layout, review
 it, or write assertions against it, **without ever seeing the screenshot**.
 
-Status: design only, nothing implemented. Every number below was measured on this machine
+Status: **phases 1–3 implemented** as `axTree()` (see the README). Phase 4 — merging with OCR to populate `unresolved` — is still open. Every number below was measured on this machine
 (Apple M1 Pro, 16 GB, macOS 26.5.2) with throwaway probes, not estimated.
 
 ---
@@ -160,7 +160,29 @@ a web page.
 
 ---
 
-## 6. Suggested order of work
+## 6. What implementation actually cost
+
+Built as `ax-helper` + `src/ax.ts`. Findings that only appeared once it ran:
+
+- **The naive JSON was more expensive than the screenshot it replaces.** A
+  250-node Safari tree came to ~12.8k tokens against ~6.9k for the image.
+  Encoding `box` as `[x, y, w, h]` instead of a keyed object, and omitting
+  `enabled: true` / `focused: false`, cut that by 44%. Pruning unlabelled
+  containers (`detail: 'content'`) took another 48% — 600 → 289 nodes on Finder.
+  Net: ~25 tokens per node instead of ~51.
+- **A full tree still is not a token win over a screenshot** — a pruned Finder
+  window is ~7.3k tokens against ~6.9k for the image. The case for it is
+  capability (exact boxes, roles, enabled state, hierarchy) and the ability to
+  take a slice, not raw token count. The README says so rather than implying a
+  saving that does not exist.
+- **Swift omits `nil` rather than encoding `null`**, so the root node has no
+  `parent` key at all. The TypeScript type said `number | null`; a consumer
+  checking `=== null` would have been wrong. Caught by a test, fixed in the type.
+- **`AXAttributedStringForRange` is app-dependent.** TextEdit returns
+  `Menlo-Regular` 11 pt; Safari's web `StaticText` returns alignment but no font.
+  That is a limit of the source, not of the reader.
+
+## 7. Suggested order of work
 
 1. **`ax-helper` with tree walk only** — role, frame, hierarchy, label, enabled. Batched reads,
    viewport culling, explicit budget, messaging timeout. This alone is ~80% of the value, because
