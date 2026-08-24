@@ -263,7 +263,10 @@ final class Pixels {
         let pw = Int(b[2] * scale), ph = Int(b[3] * scale)
         let x0 = max(0, px), y0 = max(0, py)
         let x1 = min(w - 1, px + pw), y1 = min(h - 1, py + ph)
-        if x1 - x0 < 2 || y1 - y0 < 2 { return nil }
+        // Below this there is no interior left once the edge inset is applied,
+        // and the "fill" ends up sampled from outside the element: 1x1pt
+        // screen-reader anchors were coming back solid black.
+        if x1 - x0 < 8 || y1 - y0 < 8 { return nil }
         return (x0, y0, x1, y1)
     }
 
@@ -290,7 +293,8 @@ final class Pixels {
     /// it is an estimate, not a measured CSS value.
     func style(_ b: Box) -> Style? {
         guard let (x0, y0, x1, y1) = toPixels(b) else { return nil }
-        let inset = max(2, min((x1 - x0) / 4, (y1 - y0) / 4))
+        // Never let the inset eat the whole box.
+        let inset = max(1, min((x1 - x0) / 4, (y1 - y0) / 4, min(x1 - x0, y1 - y0) / 2 - 1))
         let fill = dominant(x0 + inset, y0 + inset, x1 - inset, y1 - inset)
         let edge = dominant(x0, y0, x1, min(y0 + 1, y1))
         func near(_ a: (Int, Int, Int), _ c: (Int, Int, Int)) -> Bool {
