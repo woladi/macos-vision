@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { axTree, listWindows } from '../src/index.js';
+import { axTree, captureScreen, listWindows } from '../src/index.js';
 
 // Which app to walk is decided at run time. Hard-coding one made this suite pass
 // locally and fail on CI, where no Finder window exists — and worse, it passed
@@ -114,6 +114,28 @@ describe('axTree()', () => {
       for (const n of nodes) {
         expect(n.enabled).not.toBe(true);
         expect(n.focused).not.toBe(false);
+      }
+    }),
+    T
+  );
+
+  it(
+    'does not invent colours for elements too small to sample',
+    withApp(async (target) => {
+      // A 1x1pt screen-reader anchor has no interior once the edge inset is
+      // applied, and was coming back solid black — a colour read from outside it.
+      const shot = await captureScreen({ app: target });
+      const { nodes } = await axTree({
+        app: target,
+        maxElements: 400,
+        colors: { path: shot.path, frame: shot.frame },
+      });
+      for (const n of nodes) {
+        if (n.box[2] < 3 || n.box[3] < 3) expect(n.style).toBeUndefined();
+      }
+      // and the fix must not have suppressed everything
+      if (nodes.length > 20) {
+        expect(nodes.filter((n) => n.style).length).toBeGreaterThan(nodes.length / 2);
       }
     }),
     T
