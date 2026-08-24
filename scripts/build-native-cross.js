@@ -11,7 +11,7 @@ const TARGETS = [
   { arch: 'arm64', swift: 'arm64-apple-macos12' },
   { arch: 'x64', swift: 'x86_64-apple-macos12' },
 ];
-const HELPERS = ['vision-helper', 'pdf-helper', 'ui-helper'];
+const HELPERS = ['vision-helper', 'pdf-helper', 'ui-helper', 'ax-helper'];
 
 // Symbols added in newer SDKs are absent when building against an older one, so
 // the helper gates them on -DSDK_nn. Detect what this machine's SDK provides.

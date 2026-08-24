@@ -1,4 +1,4 @@
-// Shared plumbing for the native helpers (vision-helper, pdf-helper, ui-helper).
+// Shared plumbing for the native helpers (vision-helper, pdf-helper, ui-helper, ax-helper).
 //
 // Wire contract: a helper writes exactly one payload to stdout (the Swift side
 // diverts framework noise to stderr), exits 1 on failure and 2 when a feature is
@@ -17,6 +17,7 @@ const BIN_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../bin');
 export const VISION_BIN = join(BIN_DIR, 'vision-helper');
 export const PDF_BIN = join(BIN_DIR, 'pdf-helper');
 export const UI_BIN = join(BIN_DIR, 'ui-helper');
+export const AX_BIN = join(BIN_DIR, 'ax-helper');
 
 /** Helper exit status meaning "not supported on this macOS". */
 export const EXIT_UNSUPPORTED = 2;

@@ -296,10 +296,18 @@ describe('helper error reporting', () => {
     });
   });
 
-  it('captureScreen surfaces screencapture stderr', async () => {
+  it('captureScreen rejects a rect with no area', async () => {
+    // screencapture itself is inconsistent here — it clamps and succeeds on an
+    // unlocked Mac, fails elsewhere — so the check has to be ours to be reliable.
     await expect(captureScreen({ rect: { x: 0, y: 0, w: -5, h: -5 } })).rejects.toThrow(
-      /does not intersect any displays/
+      /positive width and height/
     );
+  });
+
+  it('captureScreen rejects a rect that is off every display', async () => {
+    await expect(
+      captureScreen({ rect: { x: 900_000, y: 900_000, w: 10, h: 10 } })
+    ).rejects.toThrow(/does not intersect any displays/);
   });
 });
 

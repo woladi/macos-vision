@@ -167,6 +167,23 @@ export async function captureScreen(opts: CaptureOptions = {}): Promise<CaptureR
     targetDesc = `window ${win.windowId} (${win.app}${win.title ? `: ${win.title}` : ''})`;
   } else if (opts.rect) {
     const { x, y, w, h } = opts.rect;
+    // Validate here rather than leaving it to screencapture: given a negative or
+    // offscreen rect it clamps and returns a tiny image with exit 0 on some
+    // machines and fails on others, so the caller's mistake would surface as
+    // corrupt output rather than an error.
+    if (!(w > 0) || !(h > 0) || ![x, y].every(Number.isFinite)) {
+      throw new Error(`capture rect must have positive width and height, got ${w}×${h}`);
+    }
+    const displays = await listDisplays();
+    const intersects = displays.some(
+      (d) => x < d.x + d.w && x + w > d.x && y < d.y + d.h && y + h > d.y
+    );
+    if (!intersects) {
+      const bounds = displays.map((d) => `${d.w}×${d.h} at ${d.x},${d.y}`).join('; ');
+      throw new Error(
+        `capture rect ${x},${y} ${w}×${h} does not intersect any displays (${bounds})`
+      );
+    }
     args.push(`-R${x},${y},${w},${h}`);
     frame = { x, y, w, h };
     targetDesc = `region ${x},${y} ${w}×${h}`;

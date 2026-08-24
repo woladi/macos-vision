@@ -356,6 +356,17 @@ export type {
 export { inferLayout, sortBlocksByReadingOrder } from './layout.js';
 
 // ─── Markdown pipeline (VisionScribe) ──────────────────────────────────────────
+export { axTree } from './ax.js';
+export type {
+  AxTree,
+  AxTreeOptions,
+  AxNode,
+  AxBox,
+  AxStyle,
+  AxTypography,
+  AxBudget,
+} from './ax.js';
+
 export { VisionScribe, OllamaUnavailableError } from './markdown/index.js';
 export type { VisionScribeOptions, ParagraphGroup } from './markdown/index.js';
 
