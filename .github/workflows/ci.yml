@@ -16,10 +16,28 @@ jobs:
         with:
           node-version: 20
 
+      # Compile the Swift helpers from this branch's source instead of
+      # downloading the prebuilt binaries for the package's current version.
+      # Otherwise every native change is tested against the *previous* release:
+      # once a version is published, postinstall finds its assets and never
+      # builds what the branch actually changed.
       - name: Install dependencies
         run: npm ci
         env:
           HUSKY: 0
+          MACOS_VISION_SKIP_DOWNLOAD: '1'
+
+      - name: Verify helpers were built from source
+        run: |
+          for h in vision-helper pdf-helper ui-helper ax-helper; do
+            test -x "bin/$h" || { echo "::error::bin/$h missing"; exit 1; }
+          done
+          # A helper older than its source means a stale download slipped through.
+          for h in vision-helper pdf-helper ui-helper ax-helper; do
+            if [ "src/native/$h.swift" -nt "bin/$h" ]; then
+              echo "::error::bin/$h is older than src/native/$h.swift"; exit 1
+            fi
+          done
 
       - name: Lint
         run: npm run lint
