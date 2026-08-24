@@ -53,7 +53,14 @@ export interface AxNode {
 }
 
 export interface AxBudget {
+  /** Nodes returned, after pruning. */
   elements: number;
+  /**
+   * Nodes the walk visited before pruning — what `maxElements` actually caps.
+   * Without it, `elements` below `maxElements` next to `capped: true` reads as a
+   * contradiction rather than as "pruning removed some of what we walked".
+   */
+  walked: number;
   /** True when the walk stopped at `maxElements`/`maxDepth` — the tree is incomplete. */
   capped: boolean;
   maxElements: number;

@@ -40,7 +40,10 @@ describe('axTree()', () => {
     async () => {
       const tree = await axTree({ app: APP, maxElements: 10 });
       expect(tree.budget.elements).toBe(tree.nodes.length);
-      expect(tree.budget.elements).toBeLessThanOrEqual(10);
+      // maxElements caps the walk, and pruning runs after it — so `walked` is
+      // what hit the cap while `elements` can legitimately be smaller.
+      expect(tree.budget.walked).toBeLessThanOrEqual(10);
+      expect(tree.budget.elements).toBeLessThanOrEqual(tree.budget.walked);
       expect(tree.budget.capped).toBe(true);
       expect(tree.budget.elapsedMs).toBeGreaterThanOrEqual(0);
     },

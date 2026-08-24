@@ -50,7 +50,12 @@ struct Node: Codable {
 }
 
 struct Budget: Codable {
+    /// Nodes returned, after pruning.
     let elements: Int
+    /// Nodes the walk visited before pruning — this is what `maxElements` caps,
+    /// so without it `elements < maxElements` alongside `capped: true` reads as a
+    /// contradiction.
+    let walked: Int
     let capped: Bool
     let maxElements: Int
     let maxDepth: Int
@@ -386,6 +391,8 @@ let keepRoles: Set<String> = [
     "Sheet", "Toolbar", "Image", "Table", "Outline",
 ]
 
+let walkedCount = nodes.count
+
 if !detailFull {
     // Keep anything that carries meaning; re-parent survivors onto their nearest
     // surviving ancestor so the hierarchy stays walkable.
@@ -417,6 +424,7 @@ let result = TreeResult(
     source: pixels == nil ? "ax" : "ax+px",
     budget: Budget(
         elements: nodes.count,
+        walked: walkedCount,
         capped: capped,
         maxElements: maxElements,
         maxDepth: maxDepth,
