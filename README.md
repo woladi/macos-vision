@@ -339,6 +339,34 @@ window.
 See [`docs/BOX-MODEL.md`](docs/BOX-MODEL.md) for the measurements behind these
 numbers.
 
+### `uiSnapshot()` — the tree plus what it misses
+
+`axTree()` sees only what the app exposes. `uiSnapshot()` captures once, walks the
+tree, runs OCR over the same window, and reports the text Vision can read that no
+node accounts for:
+
+```ts
+const snap = await uiSnapshot({ app: 'MyApp' });
+// { ...axTree fields, unresolved: [...], summary: {...} }
+
+snap.summary;
+// { nodes: 491, labelled: 402, ocrBlocks: 123, unresolved: 21, axTextCoverage: 0.83 }
+
+snap.unresolved[0];
+// { text: "Sprzedaż Q4", box: [420, 300, 88, 16], confidence: 0.98, coveredByNode: 17 }
+```
+
+That list does double duty. It completes the picture for anything custom-drawn —
+canvas, WebGL, games, images with text baked in — where AX is simply blind. And
+every entry is an accessibility gap in the app under test: `coveredByNode` present
+means a control is there but unlabelled, absent means nothing is exposed at all.
+
+`axTextCoverage` is **`null` when the walk was capped**, with `cappedWalk: true`
+alongside it. A capped walk measures how much of the tree was visited, not how
+accessible the app is — on one Safari window the figure reads 0.34 at
+`maxElements: 200` against 0.83 for the complete walk, and publishing the former
+as coverage would blame the app for our own budget.
+
 ---
 
 ## API — Markdown pipeline (VisionScribe)
